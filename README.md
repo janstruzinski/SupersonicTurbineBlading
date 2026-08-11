@@ -159,7 +159,7 @@ conical_stator = SupersonicStatorNozzle(
 The conical exit area follows the
 [NASA Glenn area–Mach relation](https://www.grc.nasa.gov/www/k-12/airplane/rktthsum.html):
 
-\[
+$$
 \frac{A}{A^*}
 =
 \frac{1}{M}
@@ -167,30 +167,30 @@ The conical exit area follows the
 \frac{2}{\gamma+1}
 \left(1+\frac{\gamma-1}{2}M^2\right)
 \right]^{\frac{\gamma+1}{2(\gamma-1)}}.
-\]
+$$
 
 The conical option is axisymmetric. Circular area scales with radius squared,
 so
 
-\[
+$$
 \frac{r_e}{r^*}=\sqrt{\frac{A_e}{A^*}}.
-\]
+$$
 
-Its meridional coordinates are normalized by throat diameter \(D^*\).
-Consequently, the walls run linearly from \(y=\pm0.5\) to
-\(y=\pm0.5\sqrt{A_e/A^*}\). The nondimensional divergent length is
+Its meridional coordinates are normalized by throat diameter $D^*$.
+Consequently, the walls run linearly from $y=\pm0.5$ to
+$y=\pm0.5\sqrt{A_e/A^*}$. The nondimensional divergent length is
 
-\[
+$$
 \frac{L_d}{D^*}
 =
 \frac{\sqrt{A_e/A^*}-1}{2\tan\theta_c},
-\]
+$$
 
-where `half_cone_angle_deg` is \(\theta_c\). At the divergent exit, the suction
+where `half_cone_angle_deg` is $\theta_c$. At the divergent exit, the suction
 side receives the same one-sided straight section used by NASA TM X-1502
 nozzle; after rotation it is parallel to `nozzle_angle_deg`. The local Mach
 used by the dense BL march is obtained by inverting
-\(A/A^*=(2y)^2\) on the supersonic branch.
+$A/A^*=(2y)^2$ on the supersonic branch.
 
 For a conical contour, `required_exit_area_ratio` and
 `ideal_exit_area_ratio` store the area ratio used by the finished contour;
@@ -207,10 +207,10 @@ actual choked static throat state, not at upstream total temperature.
 Because the `Fluid` heat capacity changes with temperature, the object
 iterates
 
-\[
+$$
 T^*=T_t\frac{2}{\gamma+1}, \qquad
 p^*=p_t\left(\frac{2}{\gamma+1}\right)^{\gamma/(\gamma-1)}
-\]
+$$
 
 until the gamma returned by `fluid.properties(T*, p*)` is self-consistent.
 That single value is then frozen for the calorically perfect contour and
@@ -220,20 +220,20 @@ boundary layer.
 The total choked area follows the
 [NASA Glenn choked mass-flow equation](https://www.grc.nasa.gov/www/k-12/airplane/rktthsum.html):
 
-\[
+$$
 \dot m =
 \frac{A^*p_t}{\sqrt{T_t}}
 \sqrt{\frac{\gamma}{R}}
 \left(\frac{2}{\gamma+1}\right)^{
 (\gamma+1)/(2(\gamma-1))}.
-\]
+$$
 
 For the rectangular MOC passage, the physical throat opening is
 
-\[
+$$
 A^*_\mathrm{total}=\frac{\dot m}{(\dot m/A^*)}, \qquad
 w^*=\frac{A^*_\mathrm{total}}{N h}.
-\]
+$$
 
 Here `throat_height=h` is the out-of-plane span and `throat_width=w*` is the
 opening of one passage. The MOC contour is normalized by throat half-width, so
@@ -242,12 +242,12 @@ every coordinate is multiplied by `w*/2`.
 The conical option does not use `throat_height`. Its one-nozzle circular area
 and throat diameter are
 
-\[
+$$
 A^*_\mathrm{one}=\frac{A^*_\mathrm{total}}{N},\qquad
 D^*=\sqrt{\frac{4A^*_\mathrm{one}}{\pi}}.
-\]
+$$
 
-Because its coordinates are normalized directly by \(D^*\), every conical
+Because its coordinates are normalized directly by $D^*$, every conical
 coordinate is multiplied by `throat_diameter`. The object stores
 `single_nozzle_throat_area`, `throat_diameter`, `throat_radius`, and
 `coordinate_scale_length`. It also stores the conical divergent length as
@@ -285,13 +285,13 @@ retained while displacement thickness continues to grow.
 `trailing_edge_thickness` is the dimensional metal thickness in metres and
 defaults to zero. It follows the NASA TM X-2343 input `TE` and participates in
 both the corrected and uncorrected mixed-out calculations. With projected
-exit pitch \(X_X=SP\cos\alpha_1\), NASA TM X-2343 defines
+exit pitch $X_X=SP\cos\alpha_1$, NASA TM X-2343 defines
 
-\[
+$$
 D_{TE}=\frac{TE}{X_X},\qquad
 A=1-\delta^*/X_X-D_{TE}-\theta/X_X,\qquad
 A_1=1-\delta^*/X_X-D_{TE}.
-\]
+$$
 
 The Python implementation uses these same `DTE`, `A`, and `A1` terms. The
 physical input is divided by `coordinate_scale_length`: MOC uses throat
@@ -316,9 +316,9 @@ case. What is unavailable is the second, shockless supersonic root.
 
 The condition used by the FORTRAN is
 
-\[
+$$
 M_{x,1}=M_e\cos(\alpha_1).
-\]
+$$
 
 When this value is below one, `mixing_results["subsonic"]` remains available
 and `mixing_results["supersonic"]["available"]` is false. When it is at least
@@ -346,10 +346,10 @@ Every coupled trial rebuilds the selected geometry, dimensional Reynolds scale,
 dense BL march, corrected geometry, and selected aftermixing root. The two
 residual equations are
 
-\[
+$$
 M_\mathrm{mixed}-M_\mathrm{requested}=0,\qquad
 \alpha_\mathrm{mixed}-\alpha_\mathrm{requested}=0.
-\]
+$$
 
 When the constructor returns, `obtained_outlet_mach` and
 `obtained_outlet_flow_angle_deg` meet those targets within the solver
@@ -397,15 +397,15 @@ the positive axial direction toward the positive direction of rotation.
 
 The object uses `rotational_speed_rpm` and `mean_radius` to calculate
 
-\[
+$$
 V_x=V\cos\alpha,\qquad V_\theta=V\sin\alpha,\qquad
 U=\frac{2\pi r_m\,\mathrm{RPM}}{60},
-\]
+$$
 
-\[
+$$
 W_x=V_x,\qquad W_\theta=V_\theta-U,\qquad
 M_\mathrm{rel}=\frac{\sqrt{W_x^2+W_\theta^2}}{a}.
-\]
+$$
 
 The derived `relative_inlet_mach` and
 `relative_inlet_flow_angle_deg` describe the far-field state. With zero
@@ -418,13 +418,13 @@ angles must lie in the NASA TN D-4421 0–90 degree design domain.
 
 `outlet_flow_angle_deg` is also an **absolute-frame** input. NASA TN D-4421 still
 requires a relative exit direction internally. In zero-deviation mode, the
-object calculates the relative metal angle \(\beta\) from the requested
-absolute direction \(\alpha\), relative exit speed \(W\), and wheel speed
-\(U\):
+object calculates the relative metal angle $\beta$ from the requested
+absolute direction $\alpha$, relative exit speed $W$, and wheel speed
+$U$:
 
-\[
+$$
 V_x=W\cos\beta,\qquad V_\theta=W\sin\beta+U.
-\]
+$$
 
 In iterative mode, every relative metal-angle trial is aftermixed in the
 rotating frame and then transformed back to the absolute frame before its
@@ -435,17 +435,17 @@ the desired mixed value and the ideal relative Mach is included in the
 iteration.
 
 The nondimensional NASA TN D-4421 coordinates are divided by the vortex sonic radius
-\(r^*\); that is not the turbomachine mean radius. `BladeShape.inlet_pitch`
+$r^*$; that is not the turbomachine mean radius. `BladeShape.inlet_pitch`
 and `BladeShape.outlet_pitch` are open passage widths. Dimensionalization uses
 the initialized blade count and treats the circumferential machine pitch as
 the total pitch:
 
-\[
+$$
 g_\mathrm{total}=\frac{2\pi r_m}{Z},\qquad
 G^*_\mathrm{total}=\frac{G^*_\mathrm{passage}}
 {1-t_\mathrm{LE}/G^*_\mathrm{total}},\qquad
 r^*=\frac{g_\mathrm{total}}{G^*_\mathrm{total}}.
-\]
+$$
 
 Boundary-layer thickness also needs a Reynolds scale. It is calculated from
 the dimensional ideal chord and derived relative inlet speed. The code
@@ -526,36 +526,36 @@ dimensional shapes continue to use metres.
 ## Finite leading- and trailing-edge thickness
 
 `leading_edge_thickness_over_total_pitch` is
-\(t_\mathrm{LE}/G^*_\mathrm{total}\) and defaults to zero. The MOC geometry's
+$t_\mathrm{LE}/G^*_\mathrm{total}$ and defaults to zero. The MOC geometry's
 calculated inlet pitch is the open passage width
-\(G^*_\mathrm{passage}\), so the nondimensional metal thickness is
+$G^*_\mathrm{passage}$, so the nondimensional metal thickness is
 
-\[
+$$
 G^*_\mathrm{total}=\frac{G^*_\mathrm{passage}}{1-\tau},\qquad
 t^*_\mathrm{LE}=\frac{\tau}{1-\tau}G^*_\mathrm{passage},\qquad
 \tau=\frac{t_\mathrm{LE}}{G^*_\mathrm{total}}.
-\]
+$$
 
 When `use_leading_edge_entry_correction=True` (the default) and
-\(\tau>0\), the NACA RM L52B06 external-wave method transforms the
-far-field rotor-relative state \((M_i,\beta_i)\) into the passage-entry state
-\((M_e,\beta_e)\). It solves the isentropic continuity equation
+$\tau>0$, the NACA RM L52B06 external-wave method transforms the
+far-field rotor-relative state $(M_i,\beta_i)$ into the passage-entry state
+$(M_e,\beta_e)$. It solves the isentropic continuity equation
 
-\[
+$$
 \frac{A_e}{A_i}
 =(1-\tau)\frac{\cos\beta_e}{\cos\beta_i}
 =\frac{(A/A^*)_e}{(A/A^*)_i}
-\]
+$$
 
 together with the Prandtl–Meyer turning relation. The NACA RM L52B06 signed inlet
 direction is opposite to this API's positive inlet-angle convention, so the
 implemented magnitude relation is
 
-\[
+$$
 \beta_e-\beta_i=\nu_e-\nu_i.
-\]
+$$
 
-The weak-wave root nearest \(M_i\) is used. The method can still be requested
+The weak-wave root nearest $M_i$ is used. The method can still be requested
 when the far-field rotor-relative axial Mach is supersonic, but the code emits
 a `RuntimeWarning` because NACA RM L52B06 derives the construction for subsonic
 axial inflow. Setting `use_leading_edge_entry_correction=False` leaves the MOC
@@ -563,10 +563,10 @@ and BL inlet state equal to the far-field state while retaining the requested
 metal thickness and pitch definitions.
 
 The BL displacement correction itself is unchanged. With legacy pitch closure,
-\(t^*_\mathrm{TE}=t^*_\mathrm{LE}\). Without pitch closure, the trailing edge
+$t^*_\mathrm{TE}=t^*_\mathrm{LE}$. Without pitch closure, the trailing edge
 is the leading-edge thickness minus the sum of the two **vertical** trailing-
 edge BL displacement heights, limited to the physically meaningful minimum of
-zero. This \(t^*_\mathrm{TE}\) is included as `DTE=TE/XX` in the NASA TM X-2434
+zero. This $t^*_\mathrm{TE}$ is included as `DTE=TE/XX` in the NASA TM X-2434
 `AFMIX` equations. The values and scales are available as
 `leading_edge_thickness`, `trailing_edge_thickness`,
 `physical_leading_edge_thickness`, `physical_trailing_edge_thickness`,
@@ -588,8 +588,8 @@ BL displacement correction, using the same millimetre scale, point order, and
 origin convention.
 
 The central passage surfaces in `plot()` are unchanged. For two-blade plots,
-the upper surface of the top blade is translated by \(+t_\mathrm{LE}\) in
-\(y\), and the lower surface of the bottom blade by \(-t_\mathrm{LE}\). A
+the upper surface of the top blade is translated by $+t_\mathrm{LE}$ in
+$y$, and the lower surface of the bottom blade by $-t_\mathrm{LE}$. A
 straight line joins the upper and lower leading-edge endpoints of each blade,
 closing the finite-thickness profile without crossing the flow passage. The
 plot also joins the trailing-edge endpoints of each upper and lower blade with
@@ -602,18 +602,18 @@ uncorrected geometry, matching their respective blade-surface styles.
 Boundary-layer correction is performed only after the uncorrected geometry is
 available. For every ideal-geometry trial, the code calculates
 
-\[
+$$
 g_\mathrm{total}=\frac{2\pi r_m}{Z},\qquad
 r^*=\frac{g_\mathrm{total}}{G^*_\mathrm{total}},\qquad
 c=C^*r^*.
-\]
+$$
 
 It then uses the passage-entry static mixture state to calculate
 
-\[
+$$
 W_\mathrm{entry}=M_\mathrm{entry}a_\mathrm{entry}, \qquad
 Re_c=\frac{W_\mathrm{entry}c}{\nu_\mathrm{entry}}.
-\]
+$$
 
 The resulting values are stored as `physical_total_pitch` (`physical_pitch` is
 a backward-compatible alias), `physical_passage_pitch`, `sonic_radius_scale`,
@@ -634,23 +634,23 @@ never asked to flash the mixture.
 The following mixing rules are explicit:
 
 - mixture molar mass:
-  \(1/M_\mathrm{mix}=\sum_i w_i/M_i\);
+  $1/M_\mathrm{mix}=\sum_i w_i/M_i$;
 - specific gas constant:
-  \(R_\mathrm{mix}=R_u/M_\mathrm{mix}\);
+  $R_\mathrm{mix}=R_u/M_\mathrm{mix}$;
 - density:
-  \(\rho=p/(R_\mathrm{mix}T)\);
+  $\rho=p/(R_\mathrm{mix}T)$;
 - ideal-gas constant-pressure heat capacity:
-  \(c_p=\sum_i w_i c_{p,i}^{0}\), using CoolProp `CP0MASS`;
+  $c_p=\sum_i w_i c_{p,i}^{0}$, using CoolProp `CP0MASS`;
 - dynamic viscosity:
-  \(\mu=\sum_i w_i\mu_i\);
+  $\mu=\sum_i w_i\mu_i$;
 - thermal conductivity:
-  \(k=\sum_i w_i k_i\).
+  $k=\sum_i w_i k_i$.
 
 The conductivity average is the additional mixing rule needed by the rotor:
-it permits \(\mathrm{Pr}=c_p\mu/k\) to be calculated rather than supplied.
-The code then derives \(c_v=c_p-R_\mathrm{mix}\),
-\(\gamma=c_p/c_v\), \(a=\sqrt{\gamma R_\mathrm{mix}T}\), and
-\(\nu=\mu/\rho\).
+it permits $\mathrm{Pr}=c_p\mu/k$ to be calculated rather than supplied.
+The code then derives $c_v=c_p-R_\mathrm{mix}$,
+$\gamma=c_p/c_v$, $a=\sqrt{\gamma R_\mathrm{mix}T}$, and
+$\nu=\mu/\rho$.
 
 The mass-weighted viscosity and conductivity rules are intentionally simple
 preliminary-design approximations. They are less accurate than kinetic-theory
@@ -660,15 +660,15 @@ partial-pressure state as liquid or two-phase; this blade method is an
 ideal-gas method, not an arbitrary-phase fluid solver.
 
 The NASA TN D-4421 geometry/starting and NASA TM X-2434 aftermixing relations require a constant
-\(\gamma\). The implementation freezes it at the actual inlet static state,
+$\gamma$. The implementation freezes it at the actual inlet static state,
 not at total temperature. Because both static temperature and
-\(\gamma(T)\) appear in the total-to-static relation, the code iterates
+$\gamma(T)$ appear in the total-to-static relation, the code iterates
 
-\[
+$$
 T_\mathrm{in} =
 \frac{T_{t,\mathrm{abs}}}
 {1+\frac{\gamma(T_\mathrm{in})-1}{2}M_\mathrm{abs}^2}
-\]
+$$
 
 until temperature and gamma are self-consistent. The relative total state is
 then derived from this common static state and the calculated relative Mach.
@@ -696,7 +696,7 @@ angle has been reached.
 
 The NASA TM X-2434 example is an impulse rotor. If `outlet_mach=None`, the internal
 NASA TN D-4421 value defaults to
-\(M_{\mathrm{rel,out}}=M_{\mathrm{rel,in}}\), and the corresponding ideal
+$M_{\mathrm{rel,out}}=M_{\mathrm{rel,in}}$, and the corresponding ideal
 absolute outlet Mach is calculated and stored as `outlet_mach`. Thus the
 omission is an explicitly documented relative impulse assumption, not a
 change in the reference frame of a supplied input.
@@ -714,10 +714,10 @@ Each trial rebuilds the ideal blade, physical scale, both dense BL marches,
 corrected shape, and aftermixing result. A damped two-variable Newton solve
 drives
 
-\[
+$$
 M_{\mathrm{mixed,abs}}-M_{\mathrm{target,abs}}=0,\qquad
 \alpha_{\mathrm{mixed,abs}}-\alpha_{\mathrm{target,abs}}=0.
-\]
+$$
 
 If no physical pair exists within the selected surface-Mach interval, the
 constructor raises `DesignConvergenceError` rather than modifying either
@@ -742,30 +742,30 @@ NASA TN D-4421 construction and thereby control the internal loading distributio
 surface acceleration/deceleration, thickness, and solidity of the resulting
 blade. The first required ordering is
 
-\[
+$$
 1 \le M_\mathrm{lower}
 \le \min(M_{\mathrm{rel,in}},M_{\mathrm{rel,out}}),\qquad
 M_\mathrm{upper}
 \ge \max(M_{\mathrm{rel,in}},M_{\mathrm{rel,out}}).
-\]
+$$
 
 These inequalities and the tighter angle-dependent bounds are obtained from
 the NASA TN D-4421 blade description and equations (6a–b) and (7a–b). With
-Prandtl–Meyer angles \(\nu\), relative inlet angle \(\beta_i>0\), and relative
-outlet metal/flow angle \(\beta_o<0\), the complete geometric intervals are
+Prandtl–Meyer angles $\nu$, relative inlet angle $\beta_i>0$, and relative
+outlet metal/flow angle $\beta_o<0$, the complete geometric intervals are
 
-\[
+$$
 \max(0,\nu_i-\beta_i,\nu_o-|\beta_o|)
 \le \nu_l \le \min(\nu_i,\nu_o),
-\]
+$$
 
-\[
+$$
 \max(\nu_i,\nu_o)
 \le \nu_u \le
 \min(\nu_i+\beta_i,\nu_o+|\beta_o|).
-\]
+$$
 
-Mach is monotonic in \(\nu\), so the code converts these intervals to numeric
+Mach is monotonic in $\nu$, so the code converts these intervals to numeric
 Mach limits using the frozen inlet-static gamma. It raises `ValueError` before
 the final geometry and BL calculations when either supplied surface Mach is
 outside its interval. Finite-value checks are also performed. During outlet-
@@ -828,7 +828,7 @@ The following diagnostics are kept:
   in the finite-thickness section
 
 Normally, `pitch_residual` is corrected outlet pitch minus corrected inlet
-pitch in units of \(r^*\), identical to `corrected_pitch_residual`. It should
+pitch in units of $r^*$, identical to `corrected_pitch_residual`. It should
 be reviewed because a specified exit angle, a specified/impulse outlet Mach,
 and exact periodic pitch are not generally three independent conditions.
 With legacy pitch closure enabled, `pitch_residual` instead aliases
@@ -846,7 +846,7 @@ Both modes start at the MOC passage inlet:
 - `"fully_turbulent"` forces turbulence at the inlet and requires
   `initial_turbulent_displacement_thickness` and
   `initial_turbulent_momentum_thickness`. These are dimensional physical
-  compressible integral thicknesses \(\delta^*\) and \(\theta\) in metres,
+  compressible integral thicknesses $\delta^*$ and $\theta$ in metres,
   and the same inlet values are applied to both blade surfaces. Each trial
   divides them by its calculated ideal chord before solving the boundary
   layer. The code also transforms their ratio to the incompressible form
@@ -902,10 +902,10 @@ skip it.
 This criterion is **not simply applicable to every rotor whose resultant
 relative Mach exceeds one**. Starting is governed by the component normal to
 the blade-row inlet plane. In an axial machine this is normally discussed as
-the relative axial Mach number \(M_x=W_x/a\). If \(M_x>1\), the row cannot
+the relative axial Mach number $M_x=W_x/a$. If $M_x>1$, the row cannot
 communicate upstream and a passage-spanning shock/swallowing calculation is
 relevant. If the resultant relative Mach is supersonic mainly because of
-wheel speed while \(M_x<1\), the NASA TN D-4421 normal-shock model is usually
+wheel speed while $M_x<1$, the NASA TN D-4421 normal-shock model is usually
 over-conservative or inapplicable; oblique leading-edge shocks and the
 unsteady rotor flow need a different starting analysis. Thus it is not
 restricted by the machine label “axial,” but by the normal/throughflow Mach
@@ -926,14 +926,14 @@ and the NASA TN D-4421 shock model.
 | `mean_radius` | Sets wheel speed, physical pitch, chord, and Reynolds scale |
 | `fluid` | Supplies composition, gas constant, heat capacity, and transport properties |
 | `inlet_total_temperature`, `inlet_total_pressure` | Define the absolute total inlet state |
-| Initial turbulent \(\delta^*\), \(\theta\) | Dimensional metres; required only for a fully turbulent inlet |
+| Initial turbulent $\delta^*$, $\theta$ | Dimensional metres; required only for a fully turbulent inlet |
 | `turning_increment_deg` | Characteristic-network resolution |
 | `number_of_stations` | Minimum temporary BL marching resolution; stored stations remain MOC-defined |
 | `iterate_pitch_closure` | Enables the legacy rotor pitch-closure iteration; incompatible with mixed-flow angle or Mach matching |
-| `leading_edge_thickness_over_total_pitch` | Specifies \(t_\mathrm{LE}/G^*_{\mathrm{total}}\); zero retains the sharp-edge design |
+| `leading_edge_thickness_over_total_pitch` | Specifies $t_\mathrm{LE}/G^*_{\mathrm{total}}$; zero retains the sharp-edge design |
 | `use_leading_edge_entry_correction` | Applies the finite-thickness external-wave transformation before MOC/BL construction |
 
-Prandtl–Meyer angles, \(M^*\), user-entered gamma and Prandtl number, gas
+Prandtl–Meyer angles, $M^*$, user-entered gamma and Prandtl number, gas
 constant, air viscosity coefficients, unit switch, print switches, plot
 switches, and rotated/unrotated-output switches are derived, assumed, or
 removed.
