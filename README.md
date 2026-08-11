@@ -59,8 +59,15 @@ from SupersonicTurbineBlading import Fluid, SupersonicRotorBlade, SupersonicStat
 
 ## Installation
 
-From the project folder, install the package and its numerical dependencies
-with the conventional `setup.py` configuration:
+Install the latest version directly from the GitHub repository with:
+
+```text
+pip3 install git+https://github.com/janstruzinski/SupersonicTurbineBlading.git
+```
+
+This also installs the numerical dependencies declared by the package. To
+install a local copy instead, run the following command from the project
+folder:
 
 ```text
 python -m pip install .
