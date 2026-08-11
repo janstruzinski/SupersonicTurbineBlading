@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_tests.py"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Keep automated linting focused on syntax and likely runtime defects. The
+# engineering equations intentionally retain a few legacy report symbols.
+select = ["E4", "E7", "E9", "F"]
+ignore = ["F841"]
+
+[tool.ruff.format]
+skip-magic-trailing-comma = true
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false
