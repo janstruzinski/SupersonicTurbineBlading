@@ -45,7 +45,7 @@ blade = SupersonicRotorBlade(
     boundary_layer_mode="fully_turbulent",
     initial_turbulent_displacement_thickness=2.0e-5,  # [m]
     initial_turbulent_momentum_thickness=5e-6,  # [m]
-    mixing_solution="subsonic",  # default: "subsonic"
+    mixing_solution="subsonic",  # force subsonic root; omit for automatic selection
     # With match_outlet_mach_after_mixing=False, this is the ideal absolute
     # Mach before mixing. When that option is True, this is the desired
     # absolute Mach after mixing.

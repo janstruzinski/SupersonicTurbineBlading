@@ -18,10 +18,10 @@ from typing import Literal
 
 import numpy as np
 
-from ..common_models import SurfaceCoordinates
+from ..common_results import SurfaceCoordinates
 from ..gas_dynamics import isentropic_area_ratio, mach_from_prandtl_meyer, prandtl_meyer_angle
 from ..geometry_utils import resample_surface
-from .stator_models import NozzleShape
+from .stator_results import NozzleShape
 
 ContourMethod = Literal["moc", "conical"]
 

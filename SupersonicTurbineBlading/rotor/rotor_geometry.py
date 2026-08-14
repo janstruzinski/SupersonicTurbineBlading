@@ -8,14 +8,14 @@ from functools import lru_cache
 
 import numpy as np
 
-from ..common_models import SurfaceCoordinates
+from ..common_results import SurfaceCoordinates
 from ..gas_dynamics import (
     critical_velocity_ratio,
     mach_from_critical_velocity_ratio,
     mach_from_prandtl_meyer,
     prandtl_meyer_angle,
 )
-from .rotor_models import BladeShape
+from .rotor_results import BladeShape
 
 
 class GeometryError(ValueError):

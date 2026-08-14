@@ -268,11 +268,22 @@ def test_absolute_outlet_angle_uses_exit_velocity_triangle():
     assert not math.isclose(selected["absolute_flow_angle_deg"], selected["relative_flow_angle_deg"], abs_tol=1.0e-3)
 
 
-def test_rotor_default_mixing_solution_is_subsonic():
+def test_rotor_default_mixing_solution_follows_premixing_axial_mach():
     blade = make_blade()
 
+    assert blade.premixing_axial_mach >= 1.0
+    assert blade.mixing_results["supersonic"]["available"]
+    assert blade.mixing_solution == "supersonic"
+    assert blade.obtained_outlet_mach == blade.mixing_results["supersonic"]["mach"]
+
+
+def test_rotor_subsonic_mixing_solution_overrides_automatic_selection():
+    blade = make_blade(mixing_solution="subsonic")
+
+    assert blade.premixing_axial_mach >= 1.0
+    assert blade.mixing_results["supersonic"]["available"]
     assert blade.mixing_solution == "subsonic"
-    assert blade.mixing_results["subsonic"]["available"]
+    assert blade.obtained_outlet_mach == blade.mixing_results["subsonic"]["mach"]
 
 
 def test_rotor_station_count_only_controls_dense_bl_march():
@@ -316,7 +327,6 @@ def test_coupled_iteration_matches_absolute_mach_and_angle_after_mixing():
         outlet_flow_angle_deg=-56.0,
         iterate_outlet_blade_angle=True,
         match_outlet_mach_after_mixing=True,
-        mixing_solution="supersonic",
     )
     assert abs(blade.obtained_outlet_flow_angle_deg + 56.0) < 2.0e-3
     assert abs(blade.obtained_outlet_mach - 2.1) < 1.0e-4
@@ -330,19 +340,23 @@ def test_coupled_iteration_flag_requires_angle_iteration_and_mach():
 
 def test_legacy_pitch_closure_changes_angle_and_closes_nasa_tm_x_2434_pitch():
     with pytest.warns(UserWarning, match="changes the outlet.*angle"):
-        blade = make_blade(iterate_pitch_closure=True, mixing_solution="subsonic")
+        blade = make_blade(
+            iterate_pitch_closure=True, mixing_solution="subsonic", turning_increment_deg=0.1
+        )
 
     assert blade.pitch_closure_iteration_count is not None
     assert blade.pitch_closure_outlet_angle_deg == (blade.outlet_blade_angle_deg)
     assert not math.isclose(blade.ideal_outlet_flow_angle_deg, blade.outlet_flow_angle_deg, abs_tol=1.0e-3)
-    assert abs(blade.pitch_closure_residual * blade.sonic_radius_scale) <= 1.0e-4
+    assert abs(blade.pitch_closure_residual * blade.sonic_radius_scale) <= 1.0e-6
     assert blade.pitch_residual == blade.pitch_closure_residual
     assert not math.isclose(blade.corrected_pitch_residual, blade.pitch_closure_residual, abs_tol=1.0e-4)
 
 
 def test_pitch_closure_keeps_trailing_edge_as_thick_as_leading_edge():
     with pytest.warns(UserWarning, match="changes the outlet.*angle"):
-        blade = make_blade(iterate_pitch_closure=True, leading_edge_thickness_over_total_pitch=0.05)
+        blade = make_blade(
+            iterate_pitch_closure=True, leading_edge_thickness_over_total_pitch=0.05, turning_increment_deg=0.1
+        )
 
     assert blade.trailing_edge_thickness == blade.leading_edge_thickness
     assert blade.physical_trailing_edge_thickness == blade.physical_leading_edge_thickness
@@ -360,19 +374,23 @@ def test_pitch_closure_rejects_mixed_flow_matching(matching_flags):
         make_blade(iterate_pitch_closure=True, **matching_flags)
 
 
-def test_subsonic_premixing_axial_mach_disables_supersonic_root():
-    blade = make_blade(outlet_flow_angle_deg=-65.0, mixing_solution="subsonic")
+def test_subsonic_premixing_axial_mach_selects_subsonic_root():
+    blade = make_blade(outlet_flow_angle_deg=-65.0)
 
     assert blade.premixing_axial_mach < 1.0
+    assert blade.mixing_solution == "subsonic"
     assert blade.mixing_results["subsonic"]["available"]
     assert not blade.mixing_results["supersonic"]["available"]
     assert not blade.supersonic_mixing_available
     assert math.isnan(blade.mixing_results["supersonic"]["mach"])
 
-    with pytest.raises(RuntimeError, match="axial Mach"):
-        make_blade(outlet_flow_angle_deg=-65.0, mixing_solution="supersonic")
     with pytest.raises(ValueError, match="outlet_mach target"):
         make_blade(outlet_mach=None, iterate_outlet_blade_angle=True, match_outlet_mach_after_mixing=True)
+
+
+def test_supersonic_mixing_solution_override_is_rejected():
+    with pytest.raises(ValueError, match="mixing_solution"):
+        make_blade(mixing_solution="supersonic")
 
 
 def test_dimensionalization_uses_mean_radius_and_blade_count():

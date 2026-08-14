@@ -14,7 +14,7 @@ from ..boundary_layer.boundary_layer_solver import (
     project_boundary_layer_result,
     solve_boundary_layer,
 )
-from ..common_models import BoundaryLayerResult, SurfaceCoordinates
+from ..common_results import BoundaryLayerResult, SurfaceCoordinates
 from ..fluid import Fluid, FluidState
 from ..gas_dynamics import isentropic_area_ratio, supersonic_mach_from_area_ratio
 from ..geometry_utils import densify_surface
@@ -25,9 +25,10 @@ from .stator_geometry import (
     design_conical_stator_nozzle,
     design_ideal_stator_nozzle,
 )
-from .stator_models import DimensionalNozzleShapes, NozzleShape
+from .stator_results import DimensionalNozzleShapes, NozzleShape
 
-MixingSolution = Literal["subsonic", "supersonic"]
+MixingRoot = Literal["subsonic", "supersonic"]
+MixingSolutionOverride = Literal["subsonic"]
 
 
 class StatorDesignConvergenceError(RuntimeError):
@@ -204,10 +205,10 @@ class SupersonicStatorNozzle:
         Physical turbulent displacement thickness at the throat, m.
     :param float | None initial_turbulent_momentum_thickness:
         Physical turbulent momentum thickness at the throat, m.
-    :param MixingSolution mixing_solution: Mixed-flow root used by the angle
-        iteration.  The default subsonic root is available for both subsonic
-        and supersonic pre-mixing axial Mach.  The shockless supersonic root
-        requires ``exit_mach*cos(nozzle_angle) >= 1``.
+    :param MixingSolutionOverride | None mixing_solution: Optional mixed-flow-root
+        override. By default, subsonic premixing axial flow uses the subsonic
+        root, while supersonic axial flow uses the shockless root when it is
+        available. Set ``"subsonic"`` to force the subsonic root.
 
     As in NASA TM X-2343, trailing-edge thickness affects only the mixed-out
     conservation calculation. The stored pressure and suction coordinates
@@ -235,7 +236,7 @@ class SupersonicStatorNozzle:
         boundary_layer_mode: BoundaryLayerMode = "laminar_then_turbulent",
         initial_turbulent_displacement_thickness: float | None = None,
         initial_turbulent_momentum_thickness: float | None = None,
-        mixing_solution: MixingSolution = "subsonic",
+        mixing_solution: MixingSolutionOverride | None = None,
     ) -> None:
         """Validate inputs and execute the complete stator-nozzle design.
 
@@ -296,7 +297,7 @@ class SupersonicStatorNozzle:
         self.initial_turbulent_momentum_thickness = (
             None if initial_turbulent_momentum_thickness is None else float(initial_turbulent_momentum_thickness)
         )
-        self.mixing_solution = mixing_solution
+        self._mixing_solution_override = mixing_solution
 
         self.upstream_total_fluid_state = self.fluid.properties(
             self.upstream_total_temperature, self.upstream_total_pressure
@@ -354,13 +355,9 @@ class SupersonicStatorNozzle:
             )
         evaluation = self._evaluate(nozzle_angle, ideal_exit_mach=ideal_exit_mach)
 
-        selected = evaluation.corrected_mixing[self.mixing_solution]
+        selected_root, selected = self._select_mixing_result(evaluation.corrected_mixing)
         if not bool(selected["available"]):
-            raise StatorDesignConvergenceError(
-                "the selected supersonic aftermixing root is unavailable "
-                "because the free-stream axial Mach before mixing is below "
-                "one; choose mixing_solution='subsonic'"
-            )
+            raise StatorDesignConvergenceError("the selected stator aftermixing root is unavailable")
 
         self.nozzle_angle_deg = float(nozzle_angle)
         self.ideal_exit_mach = float(ideal_exit_mach)
@@ -383,6 +380,7 @@ class SupersonicStatorNozzle:
         self.boundary_layer_suction_station_count = len(self.suction_boundary_layer_marching.s_over_chord)
         self.uncorrected_mixing_results = evaluation.uncorrected_mixing
         self.mixing_results = evaluation.corrected_mixing
+        self.mixing_solution = selected_root
         self.obtained_outlet_flow_angle_deg = float(selected["flow_angle_deg"])
         self.obtained_outlet_mach = float(selected["mach"])
         self.premixing_axial_mach = self.ideal_exit_mach * math.cos(math.radians(self.nozzle_angle_deg))
@@ -476,8 +474,8 @@ class SupersonicStatorNozzle:
             raise ValueError("match_exit_mach_after_mixing=True requires iterate_nozzle_angle=True")
         if values["boundary_layer_mode"] not in ("fully_turbulent", "laminar_then_turbulent"):
             raise ValueError("invalid boundary_layer_mode")
-        if values["mixing_solution"] not in ("subsonic", "supersonic"):
-            raise ValueError("mixing_solution must be 'subsonic' or 'supersonic'")
+        if values["mixing_solution"] not in (None, "subsonic"):
+            raise ValueError("mixing_solution must be None or 'subsonic'")
 
         displacement = values["initial_turbulent_displacement_thickness"]
         momentum = values["initial_turbulent_momentum_thickness"]
@@ -492,6 +490,24 @@ class SupersonicStatorNozzle:
                 raise ValueError("initial turbulent displacement thickness must exceed initial momentum thickness")
         elif displacement is not None or momentum is not None:
             raise ValueError("initial turbulent thicknesses are only used with boundary_layer_mode='fully_turbulent'")
+
+    def _select_mixing_result(
+        self, mixing: dict[str, dict[str, float | bool]]
+    ) -> tuple[MixingRoot, dict[str, float | bool]]:
+        """Select one aftermixing root for the current design trial.
+
+        :param dict mixing: Subsonic and supersonic aftermixing results.
+        :return: Selected root name and its result dictionary.
+        :rtype: tuple[MixingRoot, dict[str, float | bool]]
+        """
+
+        if self._mixing_solution_override is not None:
+            root = self._mixing_solution_override
+        else:
+            supersonic = mixing["supersonic"]
+            premixing_axial_mach = float(supersonic["premixing_axial_mach"])
+            root = "supersonic" if premixing_axial_mach >= 1.0 and bool(supersonic["available"]) else "subsonic"
+        return root, mixing[root]
 
     def _solve_throat_static_reference_state(self, *, initial_gamma: float) -> tuple[float, float, FluidState]:
         """Find gamma at the self-consistent choked static throat state.
@@ -873,9 +889,8 @@ class SupersonicStatorNozzle:
         :raises StatorDesignConvergenceError: If the selected mixing root is unavailable.
         """
 
-        result = self._evaluate(nozzle_angle_deg, ideal_exit_mach=ideal_exit_mach).corrected_mixing[
-            self.mixing_solution
-        ]
+        mixing = self._evaluate(nozzle_angle_deg, ideal_exit_mach=ideal_exit_mach).corrected_mixing
+        _, result = self._select_mixing_result(mixing)
         if not bool(result["available"]):
             raise StatorDesignConvergenceError("selected aftermixing root is unavailable at this angle")
         return float(result["flow_angle_deg"]) - self.outlet_flow_angle_deg
@@ -913,12 +928,7 @@ class SupersonicStatorNozzle:
                 valid[key] = float(residual)
 
         if not valid:
-            condition = (
-                " The shockless supersonic root additionally requires exit_mach*cos(nozzle_angle) >= 1."
-                if self.mixing_solution == "supersonic"
-                else ""
-            )
-            raise StatorDesignConvergenceError("no valid nozzle angle could be evaluated." + condition)
+            raise StatorDesignConvergenceError("no valid nozzle angle could be evaluated")
         ordered = sorted(valid.items())
         best = min(ordered, key=lambda item: abs(item[1]))
         if abs(best[1]) <= 1.0e-4:
@@ -966,9 +976,6 @@ class SupersonicStatorNozzle:
         upper_mach = max(10.0, 3.0 * target_mach)
         initial_mach = max(target_mach, 1.05)
         initial_angle = self.outlet_flow_angle_deg
-        if self.mixing_solution == "supersonic":
-            required_axial_mach = 1.0 / math.cos(math.radians(initial_angle)) + 0.05
-            initial_mach = max(initial_mach, required_axial_mach)
         variables = np.asarray(
             [min(max(initial_angle, 0.75), 89.25), min(max(initial_mach, lower_mach), upper_mach)], dtype=float
         )
@@ -983,7 +990,8 @@ class SupersonicStatorNozzle:
 
             angle = float(values[0])
             ideal_mach = float(values[1])
-            selected = self._evaluate(angle, ideal_exit_mach=ideal_mach).corrected_mixing[self.mixing_solution]
+            mixing = self._evaluate(angle, ideal_exit_mach=ideal_mach).corrected_mixing
+            _, selected = self._select_mixing_result(mixing)
             if not bool(selected["available"]):
                 raise StatorDesignConvergenceError("selected aftermixing root is unavailable")
             result = np.asarray(

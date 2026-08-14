@@ -20,7 +20,7 @@ from typing import Literal
 
 import numpy as np
 
-from ..common_models import BoundaryLayerResult, SurfaceCoordinates
+from ..common_results import BoundaryLayerResult, SurfaceCoordinates
 from ..fluid import Fluid
 
 BoundaryLayerMode = Literal["fully_turbulent", "laminar_then_turbulent"]

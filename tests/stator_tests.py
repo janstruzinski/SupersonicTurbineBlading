@@ -28,7 +28,6 @@ def make_stator(**overrides):
         boundary_layer_mode="fully_turbulent",
         initial_turbulent_displacement_thickness=2.0e-5,
         initial_turbulent_momentum_thickness=5.0e-6,
-        mixing_solution="subsonic",
     )
     inputs.update(overrides)
     return SupersonicStatorNozzle(**inputs)
@@ -248,9 +247,28 @@ def test_stator_station_count_only_controls_dense_bl_march():
 def test_subsonic_axial_flow_still_has_subsonic_mixing_solution():
     stator = make_stator()
     assert stator.premixing_axial_mach < 1.0
+    assert stator.mixing_solution == "subsonic"
     assert stator.mixing_results["subsonic"]["available"]
     assert not stator.mixing_results["supersonic"]["available"]
     assert math.isfinite(stator.obtained_outlet_flow_angle_deg)
+
+
+def test_supersonic_axial_flow_automatically_uses_supersonic_mixing_solution():
+    stator = make_stator(exit_mach=2.0, outlet_flow_angle_deg=30.0)
+
+    assert stator.premixing_axial_mach >= 1.0
+    assert stator.supersonic_mixing_available
+    assert stator.mixing_solution == "supersonic"
+    assert stator.obtained_outlet_mach == stator.mixing_results["supersonic"]["mach"]
+
+
+def test_stator_subsonic_mixing_solution_overrides_automatic_selection():
+    stator = make_stator(exit_mach=2.0, outlet_flow_angle_deg=30.0, mixing_solution="subsonic")
+
+    assert stator.premixing_axial_mach >= 1.0
+    assert stator.supersonic_mixing_available
+    assert stator.mixing_solution == "subsonic"
+    assert stator.obtained_outlet_mach == stator.mixing_results["subsonic"]["mach"]
 
 
 def test_trailing_edge_thickness_uses_nasa_tm_x_2343_afmix_blockage():
@@ -322,8 +340,8 @@ def test_trailing_edge_thickness_must_be_nonnegative():
         make_stator(trailing_edge_thickness=-1.0e-6)
 
 
-def test_unavailable_supersonic_root_is_rejected():
-    with pytest.raises(StatorDesignConvergenceError, match="axial Mach"):
+def test_supersonic_mixing_solution_override_is_rejected():
+    with pytest.raises(ValueError, match="mixing_solution"):
         make_stator(mixing_solution="supersonic")
 
 
@@ -356,11 +374,11 @@ def test_coupled_stator_iteration_supports_supersonic_root():
         outlet_flow_angle_deg=30.0,
         iterate_nozzle_angle=True,
         match_exit_mach_after_mixing=True,
-        mixing_solution="supersonic",
     )
     assert abs(stator.obtained_outlet_mach - 2.0) < 1.0e-4
     assert abs(stator.obtained_outlet_flow_angle_deg - 30.0) < 2.0e-3
     assert stator.supersonic_mixing_available
+    assert stator.mixing_solution == "supersonic"
 
 
 def test_coupled_conical_iteration_varies_area_ratio_mach():

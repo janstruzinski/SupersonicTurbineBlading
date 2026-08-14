@@ -7,7 +7,7 @@ from .stator_geometry import (
     design_conical_stator_nozzle,
     design_ideal_stator_nozzle,
 )
-from .stator_models import DimensionalNozzleShapes, NozzleShape
+from .stator_results import DimensionalNozzleShapes, NozzleShape
 from .stator_nozzle import StatorDesignConvergenceError, SupersonicStatorNozzle
 
 __all__ = [

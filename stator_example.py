@@ -53,7 +53,7 @@ moc_stator = SupersonicStatorNozzle(
     initial_turbulent_momentum_thickness=5.0e-6,  # [m]
     # Axial Mach is subsonic in this highly turned example, so only the
     # ordinary subsonic mixed solution is available.
-    mixing_solution="subsonic",  # default: "subsonic"
+    mixing_solution="subsonic",  # force subsonic root; omit for automatic selection
 )
 
 print("\nMOC stator nozzle")
@@ -85,7 +85,7 @@ moc_stator.plot(
 # This case uses the same operating point and fluid so that its circular
 # throat and contour can be compared directly with the rectangular MOC case.
 # throat_height and turning_increment_deg are intentionally absent: neither is
-# part of the conical input model.
+# part of the conical input set.
 conical_stator = SupersonicStatorNozzle(
     exit_mach=1.77,
     outlet_flow_angle_deg=70.0,  # measured from the machine axial direction
@@ -103,7 +103,7 @@ conical_stator = SupersonicStatorNozzle(
     boundary_layer_mode="fully_turbulent",
     initial_turbulent_displacement_thickness=2.0e-5,  # [m]
     initial_turbulent_momentum_thickness=5.0e-6,  # [m]
-    mixing_solution="subsonic",
+    mixing_solution="subsonic",  # force subsonic root; omit for automatic selection
 )
 
 print("\nConical de Laval stator nozzle")

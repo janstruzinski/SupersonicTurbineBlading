@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .common_models import SurfaceCoordinates
+from .common_results import SurfaceCoordinates
 
 
 def densify_surface(surface: SurfaceCoordinates, minimum_number_of_stations: int) -> SurfaceCoordinates:

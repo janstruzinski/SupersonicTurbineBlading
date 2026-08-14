@@ -15,15 +15,16 @@ from ..boundary_layer.boundary_layer_solver import (
     project_boundary_layer_result,
     solve_boundary_layer,
 )
-from ..common_models import BoundaryLayerResult, SurfaceCoordinates
+from ..common_results import BoundaryLayerResult, SurfaceCoordinates
 from ..fluid import Fluid, FluidState
 from ..gas_dynamics import isentropic_area_ratio, mach_from_prandtl_meyer, mass_flow_parameter, prandtl_meyer_angle
 from ..geometry_utils import densify_surface
 from .rotor_geometry import GeometryError, design_ideal_geometry
-from .rotor_models import BladeShape, DimensionalBladeShapes
+from .rotor_results import BladeShape, DimensionalBladeShapes
 from .rotor_starting import calculate_starting_limit
 
-MixingSolution = Literal["supersonic", "subsonic"]
+MixingRoot = Literal["supersonic", "subsonic"]
+MixingSolutionOverride = Literal["subsonic"]
 
 
 @dataclass(frozen=True)
@@ -153,10 +154,10 @@ class SupersonicRotorBlade:
     :param float | None initial_turbulent_momentum_thickness:
         Dimensional inlet momentum thickness in metres.  Required for a fully
         turbulent calculation and unused for a laminar inlet.
-    :param MixingSolution mixing_solution: Aftermixing root used by the
-        outlet-angle iteration. The default is the subsonic-axial root; use
-        ``"supersonic"`` explicitly for shockless mixing when the premixing
-        axial Mach number is at least one.
+    :param MixingSolutionOverride | None mixing_solution: Optional aftermixing-root
+        override. By default, subsonic premixing axial flow uses the subsonic
+        root, while supersonic axial flow uses the shockless root when it is
+        available. Set ``"subsonic"`` to force the subsonic root.
     :param float | None outlet_mach: Absolute outlet Mach target. By default it
         is the uniform ideal value before aftermixing. With
         ``match_outlet_mach_after_mixing=True`` it is instead the desired
@@ -201,7 +202,7 @@ class SupersonicRotorBlade:
         boundary_layer_mode: BoundaryLayerMode = "laminar_then_turbulent",
         initial_turbulent_displacement_thickness: float | None = None,
         initial_turbulent_momentum_thickness: float | None = None,
-        mixing_solution: MixingSolution = "subsonic",
+        mixing_solution: MixingSolutionOverride | None = None,
         outlet_mach: float | None = None,
     ) -> None:
         """Validate the user inputs and execute the complete rotor design.
@@ -327,7 +328,7 @@ class SupersonicRotorBlade:
         self.initial_turbulent_momentum_thickness = (
             None if initial_turbulent_momentum_thickness is None else float(initial_turbulent_momentum_thickness)
         )
-        self.mixing_solution = mixing_solution
+        self._mixing_solution_override = mixing_solution
         self._specified_absolute_outlet_mach = None if outlet_mach is None else float(outlet_mach)
         self._evaluation_cache: dict[tuple[float, float], _RotorEvaluation] = {}
         self.dimensional_shapes: DimensionalBladeShapes | None = None
@@ -437,15 +438,10 @@ class SupersonicRotorBlade:
                 stacklevel=2,
             )
         self.mixing_results = evaluation.mixing
-        selected_mixing = evaluation.mixing[self.mixing_solution]
+        selected_root, selected_mixing = self._select_mixing_result(evaluation.mixing)
         if not bool(selected_mixing["available"]):
-            if self.mixing_solution == "supersonic" and float(selected_mixing["premixing_axial_mach"]) < 1.0:
-                raise DesignConvergenceError(
-                    "the selected supersonic aftermixing root is unavailable "
-                    "because the free-stream axial Mach before mixing is "
-                    "below one; choose mixing_solution='subsonic'"
-                )
             raise DesignConvergenceError("the selected rotor aftermixing root is unavailable")
+        self.mixing_solution = selected_root
         self.obtained_outlet_flow_angle_deg = selected_mixing["flow_angle_deg"]
         self.obtained_outlet_mach = selected_mixing["mach"]
         self.obtained_relative_outlet_flow_angle_deg = selected_mixing["relative_flow_angle_deg"]
@@ -564,8 +560,26 @@ class SupersonicRotorBlade:
         elif initial_displacement is not None or initial_momentum is not None:
             raise ValueError("initial turbulent thicknesses are only used with boundary_layer_mode='fully_turbulent'")
 
-        if values["mixing_solution"] not in ("supersonic", "subsonic"):
-            raise ValueError("mixing_solution must be 'supersonic' or 'subsonic'")
+        if values["mixing_solution"] not in (None, "subsonic"):
+            raise ValueError("mixing_solution must be None or 'subsonic'")
+
+    def _select_mixing_result(
+        self, mixing: dict[str, dict[str, float | bool]]
+    ) -> tuple[MixingRoot, dict[str, float | bool]]:
+        """Select one aftermixing root for the current design trial.
+
+        :param dict mixing: Subsonic and supersonic aftermixing results.
+        :return: Selected root name and its result dictionary.
+        :rtype: tuple[MixingRoot, dict[str, float | bool]]
+        """
+
+        if self._mixing_solution_override is not None:
+            root = self._mixing_solution_override
+        else:
+            supersonic = mixing["supersonic"]
+            premixing_axial_mach = float(supersonic["premixing_axial_mach"])
+            root = "supersonic" if premixing_axial_mach >= 1.0 and bool(supersonic["available"]) else "subsonic"
+        return root, mixing[root]
 
     def _passage_entry_conditions(self) -> tuple[float, float]:
         """Return finite-thickness MOC entrance Mach and angle.
@@ -1257,8 +1271,8 @@ class SupersonicRotorBlade:
         The first unbracketed update comes from the NASA TM X-2434 continuity
         relation with outlet displacement blockage. Once trials exist on
         both sides of equal pitch, the legacy arithmetic bisection is used.
-        The NASA TM X-2434 tolerance is 0.0001 physical length unit; this API is SI,
-        so it is interpreted as 0.0001 m.
+        NASA TM X-2434 uses a tolerance of 0.0001 physical length unit. This
+        API applies a tighter SI tolerance of 0.000001 m.
 
         :param float initial_blade_angle_deg: Initial relative outlet-angle estimate, degrees.
         :param float relative_outlet_mach: Ideal relative outlet Mach held during pitch closure.
@@ -1280,7 +1294,7 @@ class SupersonicRotorBlade:
             evaluation = self._evaluate(relative_outlet_mach, blade_angle)
             pitch_residual = evaluation.corrected.outlet_pitch - evaluation.ideal.inlet_pitch
             physical_scale = self._physical_scale(evaluation.ideal)
-            pitch_tolerance = 1.0e-4 * evaluation.ideal.chord / physical_scale.chord
+            pitch_tolerance = 1.0e-6 * evaluation.ideal.chord / physical_scale.chord
             if abs(pitch_residual) <= pitch_tolerance:
                 self.pitch_closure_iteration_count = iteration + 1
                 return blade_angle
@@ -1333,7 +1347,7 @@ class SupersonicRotorBlade:
         if relative_outlet_mach is None:
             relative_outlet_mach = self._relative_outlet_mach_for_blade_angle(blade_angle_deg)
         mixing = self._evaluate(relative_outlet_mach, blade_angle_deg).mixing
-        selected = mixing[self.mixing_solution]
+        _, selected = self._select_mixing_result(mixing)
         if not bool(selected["available"]):
             raise DesignConvergenceError("selected aftermixing root is unavailable")
         return float(selected["flow_angle_deg"]) - self.outlet_flow_angle_deg
@@ -1476,7 +1490,7 @@ class SupersonicRotorBlade:
 
             blade_angle = float(values[0])
             relative_mach = float(values[1])
-            selected = self._evaluate(relative_mach, blade_angle).mixing[self.mixing_solution]
+            _, selected = self._select_mixing_result(self._evaluate(relative_mach, blade_angle).mixing)
             if not bool(selected["available"]):
                 raise DesignConvergenceError("selected aftermixing root is unavailable")
             result = np.asarray(

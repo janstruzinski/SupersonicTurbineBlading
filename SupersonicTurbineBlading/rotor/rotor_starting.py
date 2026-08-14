@@ -8,7 +8,7 @@ from collections.abc import Callable
 import numpy as np
 
 from ..gas_dynamics import critical_velocity_ratio, mach_from_critical_velocity_ratio, prandtl_meyer_angle
-from .rotor_models import StartingResult
+from .rotor_results import StartingResult
 
 
 def _bisect(

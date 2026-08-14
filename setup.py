@@ -18,6 +18,7 @@ setup(
     packages=find_packages(include=["SupersonicTurbineBlading", "SupersonicTurbineBlading.*"]),
     python_requires=">=3.10",
     install_requires=["CoolProp>=8.0,<9", "matplotlib>=3.7", "numpy>=1.24"],
+    extras_require={"test": ["pytest>=8"]},
     keywords="supersonic impulse turbine rotor stator nozzle method of characteristics boundary layer",
     classifiers=[
         "Programming Language :: Python :: 3",

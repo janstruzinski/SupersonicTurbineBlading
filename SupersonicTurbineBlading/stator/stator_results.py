@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..common_models import SurfaceCoordinates
+from ..common_results import SurfaceCoordinates
 
 
 @dataclass(frozen=True)
