@@ -178,7 +178,8 @@ $$x_i=\frac{w_i/M_i}{\sum_j w_j/M_j}, \qquad p_i=x_i p.$$
 
 The mixture molar mass and gas constant are
 
-$$\frac{1}{M_\mathrm{mix}}=\sum_i\frac{w_i}{M_i}, \qquad R_\mathrm{mix}=\frac{R_u}{M_\mathrm{mix}}.$$
+$$\frac{1}{M_{\mathrm{mix}}}=\sum_i\frac{w_i}{M_i}, \qquad
+R_{\mathrm{mix}}=\frac{R_u}{M_{\mathrm{mix}}}.$$
 
 At each state, CoolProp supplies pure-component ideal-gas heat capacity (`CP0MASS`), viscosity and thermal
 conductivity. The package applies the explicit mass-weighted rules
@@ -187,9 +188,9 @@ $$c_p=\sum_i w_i c_{p,i}^{0}, \qquad \mu=\sum_i w_i\mu_i, \qquad k=\sum_i w_i k_
 
 The remaining mixture properties follow from
 
-$$\rho=\frac{p}{R_\mathrm{mix}T}, \qquad c_v=c_p-R_\mathrm{mix}, \qquad \gamma=\frac{c_p}{c_v},$$
+$$\rho=\frac{p}{R_{\mathrm{mix}}T}, \qquad c_v=c_p-R_{\mathrm{mix}}, \qquad \gamma=\frac{c_p}{c_v},$$
 
-$$\mathrm{Pr}=\frac{c_p\mu}{k}, \qquad a=\sqrt{\gamma R_\mathrm{mix}T}, \qquad \nu=\frac{\mu}{\rho}.$$
+$$\mathrm{Pr}=\frac{c_p\mu}{k}, \qquad a=\sqrt{\gamma R_{\mathrm{mix}}T}, \qquad \nu=\frac{\mu}{\rho}.$$
 
 The viscosity and conductivity averages are deliberately simple engineering approximations. The class also checks every
 component phase at its partial-pressure state and rejects liquid or two-phase states.
@@ -209,7 +210,7 @@ state. `lower_surface_mach` and `upper_surface_mach` are therefore surface-loadi
 
 Positive inlet angle is measured from the machine axis toward the direction of rotation. The rotor design domain uses
 a positive relative inlet angle and a negative relative outlet angle. Coordinates are initially normalized by the
-vortex sonic radius $r^*$ and are subsequently scaled using mean radius and blade count.
+vortex sonic radius $r^{\ast}$ and are subsequently scaled using mean radius and blade count.
 
 #### Example of `SupersonicRotorBlade` with inputs and outputs
 
@@ -268,7 +269,7 @@ The most important optional inputs used above are:
 |---|-----------------------------------------------------------------------------------------------|
 | `outlet_mach` | Absolute ideal outlet Mach; `None` sets $M_{\mathrm{rel,out}}=M_{\mathrm{rel,in}}$.           |
 | `turning_increment_deg` | Maximum MOC turning step in $(0,1]$ degrees; default 0.1. |
-| `leading_edge_thickness_over_total_pitch` | Ratio $t_\mathrm{LE}/G^*_{\mathrm{total}}$; default zero. |
+| `leading_edge_thickness_over_total_pitch` | Ratio $t_{\mathrm{LE}}/G^{\ast}_{\mathrm{total}}$; default zero. |
 | `use_leading_edge_entry_correction` | Corrects inlet Mach and flow angle for finite thickness; default `True`. |
 | `calculate_starting` | Runs the NASA TN D-4421 supersonic-starting feasibility calculation; default `True`.          |
 
@@ -296,19 +297,22 @@ Each `SurfaceCoordinates` object provides `x`, `y`, `mach` and `tangent_angle_ra
 
 The inlet API uses the absolute frame. The absolute velocity and wheel speed are
 
-$$V_x=V\cos\alpha, \qquad V_\theta=V\sin\alpha, \qquad U=\frac{2\pi r_m N}{60}.$$
+$$V_x=V\cos\alpha, \qquad V_{\theta}=V\sin\alpha, \qquad U=\frac{2\pi r_m N}{60}.$$
 
 The rotor-relative velocity triangle is
 
-$$W_x=V_x, \qquad W_\theta=V_\theta-U, \qquad M_\mathrm{rel}=\frac{\sqrt{W_x^2+W_\theta^2}}{a}.$$
+$$W_x=V_x, \qquad W_{\theta}=V_{\theta}-U, \qquad
+M_{\mathrm{rel}}=\frac{\sqrt{W_x^2+W_{\theta}^2}}{a}.$$
 
-Because mixture heat capacity depends on temperature, the inlet static state and $γ$ are solved together:
+Because mixture heat capacity depends on temperature, the inlet static state and $\gamma$ are solved together:
 
-$$T_\mathrm{in}=\frac{T_{t,\mathrm{abs}}}{1+\frac{\gamma(T_\mathrm{in})-1}{2}M_\mathrm{abs}^2}, \qquad
-p_\mathrm{in}=\frac{p_{t,\mathrm{abs}}}{\left(1+\frac{\gamma-1}{2}M_\mathrm{abs}^2\right)^{\gamma/(\gamma-1)}}.$$
+$$T_{\mathrm{in}}=\frac{T_{t,\mathrm{abs}}}
+{1+\frac{\gamma(T_{\mathrm{in}})-1}{2}M_{\mathrm{abs}}^2}, \qquad
+p_{\mathrm{in}}=\frac{p_{t,\mathrm{abs}}}
+{\left(1+\frac{\gamma-1}{2}M_{\mathrm{abs}}^2\right)^{\gamma/(\gamma-1)}}.$$
 
-The converged inlet-static $γ$ is frozen for the ideal geometry. The relative total state then follows from the same
-static state and the calculated relative Mach number.
+The converged inlet-static $\gamma$ is frozen for the ideal geometry. The relative total state then follows from the
+same static state and the calculated relative Mach number.
 
 At the exit, the MOC construction requires a relative Mach and relative flow direction. If an absolute `outlet_mach`
 is supplied, the class conserves relative total temperature at constant radius and solves the velocity triangle for
@@ -318,25 +322,25 @@ the corresponding relative state. The ideal outlet metal angle equals the ideal 
 
 The NASA design uses the critical velocity ratio
 
-$$M^*=\frac{V}{V_\mathrm{cr}}=
+$$M^{\ast}=\frac{V}{V_{\mathrm{cr}}}=
 \sqrt{\frac{\frac{\gamma+1}{2}M^2}{1+\frac{\gamma-1}{2}M^2}}.$$
 
 For free-vortex flow, the nondimensional radius is
 
-$$\frac{r}{r^*}=\frac{1}{M^*}.$$
+$$\frac{r}{r^{\ast}}=\frac{1}{M^{\ast}}.$$
 
 The pressure and suction constant-Mach arcs therefore have different radii. Their surface Mach numbers must bracket
 the inlet and outlet relative Mach numbers:
 
-$$1\le M_\mathrm{lower}\le\min(M_\mathrm{rel,in},M_\mathrm{rel,out}), \qquad
-M_\mathrm{upper}\ge\max(M_\mathrm{rel,in},M_\mathrm{rel,out}).$$
+$$1\le M_{\mathrm{lower}}\le\min(M_{\mathrm{rel,in}},M_{\mathrm{rel,out}}), \qquad
+M_{\mathrm{upper}}\ge\max(M_{\mathrm{rel,in}},M_{\mathrm{rel,out}}).$$
 
-The tighter angle-dependent limits are expressed conveniently with the Prandtl-Meyer angle $ν$:
+The tighter angle-dependent limits are expressed conveniently with the Prandtl-Meyer angle $\nu$:
 
 $$\nu(M)=\sqrt{\frac{\gamma+1}{\gamma-1}}
 \tan^{-1}\sqrt{\frac{\gamma-1}{\gamma+1}(M^2-1)}-\tan^{-1}\sqrt{M^2-1}.$$
 
-For $β_i>0$ and $β_o<0$,
+For $\beta_i>0$ and $\beta_o<0$,
 
 $$\max(0,\nu_i-\beta_i,\nu_o-|\beta_o|)\le\nu_l\le\min(\nu_i,\nu_o),$$
 
@@ -352,18 +356,18 @@ chord and solidity. They should be treated as preliminary design variables that 
 
 ##### Finite leading-edge thickness and passage-entry state
 
-The MOC solution supplies the open inlet passage pitch $G^*_{\mathrm{passage}}$. With
-$\tau=t_\mathrm{LE}/G^*_{\mathrm{total}}$,
+The MOC solution supplies the open inlet passage pitch $G^{\ast}_{\mathrm{passage}}$. With
+$\tau=t_{\mathrm{LE}}/G^{\ast}_{\mathrm{total}}$,
 
-$$G^*_{\mathrm{total}}=\frac{G^*_{\mathrm{passage}}}{1-\tau}, \qquad
-t^*_\mathrm{LE}=\frac{\tau}{1-\tau}G^*_{\mathrm{passage}}.$$
+$$G^{\ast}_{\mathrm{total}}=\frac{G^{\ast}_{\mathrm{passage}}}{1-\tau}, \qquad
+t^{\ast}_{\mathrm{LE}}=\frac{\tau}{1-\tau}G^{\ast}_{\mathrm{passage}}.$$
 
 For positive thickness, `use_leading_edge_entry_correction=True` applies the correction of inlet flow conditions
 described in [NACA RM L52B06](https://ntrs.nasa.gov/citations/19930087012). The far-field relative state
 $(M_i,\beta_i)$ is converted to the open-passage entry state $(M_e,\beta_e)$ by simultaneously satisfying
 
 $$\frac{A_e}{A_i}=(1-\tau)\frac{\cos\beta_e}{\cos\beta_i}
-=\frac{(A/A^*)_e}{(A/A^*)_i},$$
+=\frac{(A/A^{\ast})_e}{(A/A^{\ast})_i},$$
 
 $$\beta_e-\beta_i=\nu_e-\nu_i.$$
 
@@ -377,15 +381,16 @@ supersonic relative axial inflow because the NACA construction was derived for s
 
 The machine circumference fixes the dimensional total pitch:
 
-$$g_\mathrm{total}=\frac{2\pi r_m}{Z}, \qquad
-r^*=\frac{g_\mathrm{total}}{G^*_{\mathrm{total}}}, \qquad c=C^*r^*.$$
+$$g_{\mathrm{total}}=\frac{2\pi r_m}{Z}, \qquad
+r^{\ast}=\frac{g_{\mathrm{total}}}{G^{\ast}_{\mathrm{total}}}, \qquad
+c=C^{\ast}r^{\ast}.$$
 
 The passage-entry state defines the chord Reynolds number:
 
-$$W_\mathrm{entry}=M_\mathrm{entry}a_\mathrm{entry}, \qquad
-Re_c=\frac{W_\mathrm{entry}c}{\nu_\mathrm{entry}}.$$
+$$W_{\mathrm{entry}}=M_{\mathrm{entry}}a_{\mathrm{entry}}, \qquad
+Re_c=\frac{W_{\mathrm{entry}}c}{\nu_{\mathrm{entry}}}.$$
 
-`dimensionalize()` multiplies both stored shapes by the same final $r^*$ and returns coordinates in metres. The CAD
+`dimensionalize()` multiplies both stored shapes by the same final $r^{\ast}$ and returns coordinates in metres. The CAD
 profile arrays are assembled as a single blade outline in millimetres, with the lower-surface leading edge at the
 origin.
 
@@ -408,7 +413,7 @@ The ideal rotor design follows this sequence:
 2. The finite-thickness entry model supplies the Mach and angle at the open passage entrance.
 3. `rotor_geometry.py` converts the four design Mach numbers to Prandtl-Meyer variables, builds the inlet/outlet
    transitions and vortex arcs, and returns a nondimensional `BladeShape`.
-4. Mean radius and blade count establish pitch, $r^*$, physical chord and Reynolds number.
+4. Mean radius and blade count establish pitch, $r^{\ast}$, physical chord and Reynolds number.
 5. `rotor_starting.py` optionally evaluates the starting limit.
 6. `rotor_results.py` and `common_results.py` store the resulting geometry and design checks.
 
@@ -538,23 +543,23 @@ Remaining input variables are documented later. Important base-design properties
 
 ##### Common throat sizing
 
-The constant $γ used by either contour is evaluated at the actual sonic static state. Because `Fluid` heat capacity
-varies with temperature, the class iterates
+The constant $\gamma$ used by either contour is evaluated at the actual sonic static state. Because `Fluid` heat
+capacity varies with temperature, the class iterates
 
-$$T^*=T_t\frac{2}{\gamma+1}, \qquad
-p^*=p_t\left(\frac{2}{\gamma+1}\right)^{\gamma/(\gamma-1)}$$
+$$T^{\ast}=T_t\frac{2}{\gamma+1}, \qquad
+p^{\ast}=p_t\left(\frac{2}{\gamma+1}\right)^{\gamma/(\gamma-1)}$$
 
-until `fluid.properties(T*, p*)` returns a consistent $γ. That value is then frozen for the contour and choked-flow
-equations.
+until `fluid.properties(T*, p*)` returns a consistent $\gamma$. That value is then frozen for the contour and
+choked-flow equations.
 
 The total throat area follows from
 
-$$\dot m=\frac{A^*p_t}{\sqrt{T_t}}\sqrt{\frac{\gamma}{R}}
+$$\dot m=\frac{A^{\ast}p_t}{\sqrt{T_t}}\sqrt{\frac{\gamma}{R}}
 \left(\frac{2}{\gamma+1}\right)^{\frac{\gamma+1}{2(\gamma-1)}}.$$
 
 The area assigned to one of $N$ identical nozzles is
 
-$$A^*_\mathrm{one}=\frac{A^*_\mathrm{total}}{N}.$$
+$$A^{\ast}_{\mathrm{one}}=\frac{A^{\ast}_{\mathrm{total}}}{N}.$$
 
 ##### MOC nozzle
 
@@ -564,7 +569,7 @@ of the characteristic region the flow is uniform and parallel to the nozzle axis
 
 For a sharp-throat minimum-length construction, the initial wall angle is half the exit Prandtl-Meyer angle:
 
-$$\theta_\mathrm{wall,*}=\frac{\nu_e}{2}.$$
+$$\theta_{\mathrm{wall},\ast}=\frac{\nu_e}{2}.$$
 
 The two-dimensional compatibility variables and Mach angle are
 
@@ -575,9 +580,9 @@ adjacent finite regions when intersecting characteristic lines, consistent with 
 
 The MOC coordinates use a throat half-width of one, so the full nondimensional opening is two. The physical opening is
 
-$$w^*=\frac{A^*_\mathrm{total}}{Nh},$$
+$$w^{\ast}=\frac{A^{\ast}_{\mathrm{total}}}{Nh},$$
 
-where $h$ is `throat_height`; every stored coordinate is multiplied by $w^*/2$ to scale them to machine size.
+where $h$ is `throat_height`; every stored coordinate is multiplied by $w^{\ast}/2$ to scale them to machine size.
 
 After the shaped divergent contour, the suction wall continues as a straight line in the nozzle-axis system. If
 $(x_e,y_e)$ is the end of the nondimensional upper contour and $\alpha_N$ is the nozzle angle from the machine axis,
@@ -591,21 +596,21 @@ The converging subsonic portion upstream of the sharp throat is not designed by 
 
 The conical route is axisymmetric and uses the perfect-gas area-Mach relation:
 
-$$\frac{A}{A^*}=\frac{1}{M}
+$$\frac{A}{A^{\ast}}=\frac{1}{M}
 \left[\frac{2}{\gamma+1}\left(1+\frac{\gamma-1}{2}M^2\right)\right]^{\frac{\gamma+1}{2(\gamma-1)}}.$$
 
 Circular area scales with radius squared, giving
 
-$$\frac{r_e}{r^*}=\sqrt{\frac{A_e}{A^*}}.$$
+$$\frac{r_e}{r^{\ast}}=\sqrt{\frac{A_e}{A^{\ast}}}.$$
 
 The throat diameter is obtained directly from the nozzle choked area:
 
-$$D^*=\sqrt{\frac{4A^*_\mathrm{one}}{\pi}}.$$
+$$D^{\ast}=\sqrt{\frac{4A^{\ast}_{\mathrm{one}}}{\pi}}.$$
 
-Coordinates are normalized by $D^*$. The walls run from $y=\pm0.5$ at the throat to
-$y=\pm0.5\sqrt{A_e/A^*}$ at the exit. For divergent half-angle $\theta_c$,
+Coordinates are normalized by $D^{\ast}$. The walls run from $y=\pm0.5$ at the throat to
+$y=\pm0.5\sqrt{A_e/A^{\ast}}$ at the exit. For divergent half-angle $\theta_c$,
 
-$$\frac{L_d}{D^*}=\frac{\sqrt{A_e/A^*}-1}{2\tan\theta_c}.$$
+$$\frac{L_d}{D^{\ast}}=\frac{\sqrt{A_e/A^{\ast}}-1}{2\tan\theta_c}.$$
 
 The suction wall has the same straigth downstream line as used by the MOC contour.
 
@@ -648,7 +653,7 @@ The rotor and stator use the same compressible integral boundary-layer solver in
 
 The compressible displacement and momentum thicknesses represent the mass-flow and momentum deficits:
 
-$$\delta^*=\int_0^\delta\left(1-\frac{\rho u}{\rho_e U_e}\right)dy,$$
+$$\delta^{\ast}=\int_0^\delta\left(1-\frac{\rho u}{\rho_e U_e}\right)dy,$$
 
 $$\theta=\int_0^\delta\frac{\rho u}{\rho_e U_e}
 \left(1-\frac{u}{U_e}\right)dy.$$
@@ -659,8 +664,8 @@ $$\frac{T_e}{T_t}=\frac{1}{1+\frac{\gamma-1}{2}M_e^2}, \qquad
 \frac{p_e}{p_t}=\left(\frac{T_e}{T_t}\right)^{\gamma/(\gamma-1)}.$$
 
 The wall temperature is set equal to total temperature, matching the NASA rotor and stator drivers. The geometry uses
-the frozen reference $γ, while viscosity, heat capacity and conductivity are reevaluated through `Fluid` at the local
-states.
+the frozen reference $\gamma$, while viscosity, heat capacity and conductivity are reevaluated through `Fluid` at the
+local states.
 
 The laminar method applies the Cohen-Reshotko transformation and correlation tables to the momentum integral
 equation. It predicts neutral instability, transition and impending laminar separation. The turbulent method marches
@@ -673,7 +678,7 @@ Two inlet modes are available in both public classes:
 | `boundary_layer_mode` | Required initialization |
 |---|---|
 | `"laminar_then_turbulent"` | Starts with zero thickness and predicts transition. |
-| `"fully_turbulent"` | Requires positive inlet $\delta^*$ and $\theta$ in metres, with $\delta^*>\theta$. |
+| `"fully_turbulent"` | Requires positive inlet $\delta^{\ast}$ and $\theta$ in metres, with $\delta^{\ast}>\theta$. |
 
 The initial thicknesses are in metres. Each geometry trial divides them by its own physical scale before marching.
 Their ratio is transformed to the incompressible form factor required by the turbulent correlation.
@@ -710,8 +715,8 @@ same ideal contour.
 
 The boundary layer correction is applied in the nozzle transverse direction:
 
-$$y_\mathrm{pressure,corr}=y_\mathrm{pressure}-\delta^*, \qquad
-y_\mathrm{suction,corr}=y_\mathrm{suction}+\delta^*.$$
+$$y_{\mathrm{pressure,corr}}=y_{\mathrm{pressure}}-\delta^{\ast}, \qquad
+y_{\mathrm{suction,corr}}=y_{\mathrm{suction}}+\delta^{\ast}.$$
 
 It is a vertical offset in nozzle-axis coordinates. The suction-side straight wall segment is
 then extended twice: first to restore the prescribed nozzle installation geometry after adding displacement thickness,
@@ -724,12 +729,12 @@ Stator controls and outputs are:
 |---|--------------------------------------------------------------|
 | `number_of_stations` | Minimum temporary marching resolution; default 101.          |
 | `boundary_layer_mode` | Natural-transition or fully turbulent BL.                    |
-| `initial_turbulent_displacement_thickness` | Input throat $\delta^*$ in fully turbulent mode, in metres.  |
+| `initial_turbulent_displacement_thickness` | Input throat $\delta^{\ast}$ in fully turbulent mode, in metres.  |
 | `initial_turbulent_momentum_thickness` | Input throat $\theta$ in fully turbulent mode, in metres. |
 | `pressure_boundary_layer`, `suction_boundary_layer` | Results projected onto stored geometry stations.             |
 | `pressure_boundary_layer_marching`, `suction_boundary_layer_marching` | Dense integration-grid results. |
 | `corrected_shape`, `corrected_dimensional_shape` | Displacement-corrected geometry in throat units and metres.  |
-| `corrected_exit_displacement_thickness` | Extrapolated final suction-side $\delta^*$ in metres.        |
+| `corrected_exit_displacement_thickness` | Extrapolated final suction-side $\delta^{\ast}$ in metres.        |
 | `corrected_exit_momentum_thickness` | Extrapolated final suction-side $\theta$ in metres.          |
 
 For the conical contour, local Mach on the dense divergent-wall grid is found by inverting the circular area-Mach
@@ -746,19 +751,20 @@ state.
 The solver returns displacement thickness normal to the local flow. The NASA-style blade-coordinate correction uses
 its vertical component:
 
-$$\Delta y=\frac{\delta^*}{|\cos\eta|},$$
+$$\Delta y=\frac{\delta^{\ast}}{|\cos\eta|},$$
 
-where $η$ is the local surface tangent angle. The pressure surface moves upward and the suction surface downward,
+where $\eta$ is the local surface tangent angle. The pressure surface moves upward and the suction surface downward,
 away from the open passage. Inlet and outlet open pitches are then recalculated from the displaced endpoints and their
 uniform-flow directions.
 
 Without legacy pitch closure, the finite trailing-edge metal remaining between the displaced surfaces is
 
-$$t^*_\mathrm{TE}=\max\left[0,
-t^*_\mathrm{LE}-\left(|\Delta y_{p,\mathrm{TE}}|+|\Delta y_{s,\mathrm{TE}}|\right)\right].$$
+$$t^{\ast}_{\mathrm{TE}}=\max\left[0,
+t^{\ast}_{\mathrm{LE}}-\left(|\Delta y_{p,\mathrm{TE}}|+|\Delta y_{s,\mathrm{TE}}|\right)\right].$$
 
-With legacy pitch closure, the model carries $t^*_\mathrm{LE}$ through to the trailing edge, however the blade shape
-does not maintain desired outlet angle. The iterative scheme used for this is explained later in this documentation.
+With legacy pitch closure, the model carries $t^{\ast}_{\mathrm{LE}}$ through to the trailing edge, however the
+blade shape does not maintain desired outlet angle. The iterative scheme used for this is explained later in this
+documentation.
 In both cases the resulting thickness is used in the rotor mixed-out blockage calculation.
 
 Rotor controls and outputs are:
@@ -767,13 +773,13 @@ Rotor controls and outputs are:
 |---|--------------------------------------------------------------------|
 | `number_of_stations` | Minimum temporary stations on each surface; default 101.           |
 | `boundary_layer_mode` | Natural-transition or fully turbulent BL.                          |
-| `initial_turbulent_displacement_thickness` | Inlet $\delta^*$ applied to both surfaces, in metres.              |
+| `initial_turbulent_displacement_thickness` | Inlet $\delta^{\ast}$ applied to both surfaces, in metres.              |
 | `initial_turbulent_momentum_thickness` | Inlet $\theta$ applied to both surfaces, in metres.                |
 | `pressure_boundary_layer`, `suction_boundary_layer` | Results projected onto the MOC stations. |
 | `pressure_boundary_layer_marching`, `suction_boundary_layer_marching` | Dense integration-grid results. |
-| `corrected_shape`, `dimensional_shapes.corrected` | Displacement-corrected passage in $r^*$ units and metres. |
+| `corrected_shape`, `dimensional_shapes.corrected` | Displacement-corrected passage in $r^{\ast}$ units and metres. |
 | `trailing_edge_thickness`, `physical_trailing_edge_thickness` | Remaining trailing-edge metal. |
-| `corrected_pitch_residual` | Corrected outlet pitch minus corrected inlet pitch in $r^*$ units. |
+| `corrected_pitch_residual` | Corrected outlet pitch minus corrected inlet pitch in $r^{\ast}$ units. |
 
 `blade.plot(dimensional=True, corrected=True)` plots the corrected geometry in millimetres;
 `corrected=False` selects the ideal shape. `show_two_blades=True` completes the two blades surrounding the stored
@@ -785,24 +791,24 @@ The `AFMIX` models in NASA TM X-2434 and NASA TM X-2343 replace the nonuniform b
 trailing-edge blockage by a uniform downstream state. They apply continuity, axial momentum, tangential momentum and
 energy across the mixing plane. The result is an engineering estimate of mixed Mach number and flow angle.
 
-For premixing Mach $M_1$ and direction $α_1$, define the critical velocity ratio
+For premixing Mach $M_1$ and direction $\alpha_1$, define the critical velocity ratio
 
-$$q_1=M_1^*=\sqrt{\frac{\frac{\gamma+1}{2}M_1^2}{1+\frac{\gamma-1}{2}M_1^2}}$$
+$$q_1=M_1^{\ast}=\sqrt{\frac{\frac{\gamma+1}{2}M_1^2}{1+\frac{\gamma-1}{2}M_1^2}}$$
 
 and the exit pitch projected onto the axial-normal plane
 
-$$X_X=S\cos\alpha_1.$$
+$$X_{X}=S\cos\alpha_1.$$
 
 The displacement, momentum and metal blockage ratios are
 
-$$D_\delta=\frac{\delta_p^*+\delta_s^*}{X_X}, \qquad
-D_\theta=\frac{\theta_p+\theta_s}{X_X}, \qquad
-D_\mathrm{TE}=\frac{t_\mathrm{TE}}{X_X}.$$
+$$D_{\delta}=\frac{\delta_{p}^{\ast}+\delta_{s}^{\ast}}{X_{X}}, \qquad
+D_{\theta}=\frac{\theta_{p}+\theta_{s}}{X_{X}}, \qquad
+D_{\mathrm{TE}}=\frac{t_{\mathrm{TE}}}{X_{X}}.$$
 
 Following the legacy notation, the effective momentum and flow areas are
 
-$$A=1-D_\delta-D_\mathrm{TE}-D_\theta, \qquad
-A_1=1-D_\delta-D_\mathrm{TE}.$$
+$$A=1-D_{\delta}-D_{\mathrm{TE}}-D_{\theta}, \qquad
+A_1=1-D_{\delta}-D_{\mathrm{TE}}.$$
 
 The conservation equations reduce to
 
@@ -856,7 +862,7 @@ mixed state. The properties are:
 #### Stator aftermixing
 
 The stator is stationary, so the nozzle-axis velocity is already in the absolute frame. `trailing_edge_thickness` is a
-physical metal thickness in metres and contributes to $D_\mathrm{TE}$. As in NASA TM X-2343, it affects the mixed-out
+physical metal thickness in metres and contributes to $D_{\mathrm{TE}}$. As in NASA TM X-2343, it affects the mixed-out
 conservation calculation only.
 
 `uncorrected_mixing_results` is a diagnostic calculation at the original exit stations and ideal spacing uncorrected by
@@ -887,7 +893,7 @@ iterate_outlet_blade_angle=True
 
 to vary the relative outlet metal angle until the selected mixed absolute angle matches `outlet_flow_angle_deg`:
 
-$$\alpha_\mathrm{mixed,abs}-\alpha_\mathrm{requested,abs}=0.$$
+$$\alpha_{\mathrm{mixed,abs}}-\alpha_{\mathrm{requested,abs}}=0.$$
 
 The solver scans the admissible negative blade-angle range, brackets the residual and bisects it.
 
@@ -909,8 +915,8 @@ outlet_mach=1.20  # desired absolute mixed Mach
 to treat `outlet_mach` as a mixed-state target as well. A damped two-variable Newton solve varies the ideal relative
 outlet Mach and relative metal angle until
 
-$$M_\mathrm{mixed,abs}-M_\mathrm{target,abs}=0, \qquad
-\alpha_\mathrm{mixed,abs}-\alpha_\mathrm{target,abs}=0.$$
+$$M_{\mathrm{mixed,abs}}-M_{\mathrm{target,abs}}=0, \qquad
+\alpha_{\mathrm{mixed,abs}}-\alpha_{\mathrm{target,abs}}=0.$$
 
 The final ideal construction value is stored in `relative_outlet_mach`; the requested and obtained values after mixing
 remain available separately. The Mach target flag requires both a supplied `outlet_mach`, `outlet_flow_angle_deg` and
@@ -927,7 +933,7 @@ iterate_pitch_closure=True
 to reproduce the NASA TM X-2434 `BETAT` closure. It holds the ideal relative outlet Mach fixed and varies the relative
 outlet angle until
 
-$$G^*_{\mathrm{out,corr}}-G^*_{\mathrm{in,ideal}}=0.$$
+$$G^{\ast}_{\mathrm{out,corr}}-G^{\ast}_{\mathrm{in,ideal}}=0.$$
 
 This allows to keep the same leading and trailing edge thickness for the rotor blade when boundary layer correction is
 used. The first unbracketed update follows the legacy mass-continuity expression; once trial geometries exist on both
@@ -953,7 +959,7 @@ iterate_nozzle_angle=True
 
 to vary the nozzle-axis metal angle until
 
-$$\alpha_\mathrm{mixed}-\alpha_\mathrm{requested}=0.$$
+$$\alpha_{\mathrm{mixed}}-\alpha_{\mathrm{requested}}=0.$$
 
 The solver evaluates feasible angles around the target, locates a sign-changing bracket and uses bisection. The ideal
 construction Mach remains `exit_mach`; the converged metal angle is stored as `nozzle_angle_deg`.
@@ -970,8 +976,8 @@ match_exit_mach_after_mixing=True
 to reinterpret `exit_mach` as the requested mixed Mach. A Newton solve varies `nozzle_angle_deg` and
 `ideal_exit_mach` until
 
-$$M_\mathrm{mixed}-M_\mathrm{requested}=0, \qquad
-\alpha_\mathrm{mixed}-\alpha_\mathrm{requested}=0.$$
+$$M_{\mathrm{mixed}}-M_{\mathrm{requested}}=0, \qquad
+\alpha_{\mathrm{mixed}}-\alpha_{\mathrm{requested}}=0.$$
 
 For every MOC trial, the characteristic contour is rebuilt for the new ideal exit Mach. For every conical trial, the
 area ratio, exit radius and divergent length are rebuilt. The converged premixing value is stored as `ideal_exit_mach`,
