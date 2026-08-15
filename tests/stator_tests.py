@@ -22,8 +22,7 @@ def make_stator(**overrides):
         fluid=Fluid(["Air"], [1.0]),
         upstream_total_temperature=900.0,
         upstream_total_pressure=1.0e6,
-        flow_turning_increment=0.5,
-        number_of_stations=81,
+        number_of_nodes=41,
         iterate_outlet_metal_angle=False,
         boundary_layer_mode="fully_turbulent",
         initial_turbulent_displacement_thickness=2.0e-5,
@@ -49,17 +48,18 @@ def test_stator_passes_nasa_tm_x_2343_correlation_limit(monkeypatch):
 
 def test_nasa_tm_x_1502_ideal_nozzle_endpoint_regression():
     # NASA TM X-1502 table II prints x=64.15586 and y=12.97935 for
-    # M_e=4.05, gamma=1.36, and requested delta-v=0.1 degree.  The Python
+    # M_e=4.05, gamma=1.36, and requested delta-v=0.1 degree. The equivalent
+    # fixed mesh has 351 wall nodes including the throat and exit. The Python
     # inverse Prandtl--Meyer solve is substantially tighter than the FORTRAN
     # tolerance, so a small difference from the rounded legacy values remains.
     construction = design_ideal_stator_nozzle(
         ideal_outlet_absolute_flow_mach=4.05,
         outlet_metal_angle=70.0,
-        flow_turning_increment=0.1,
+        number_of_nodes=351,
         gamma=1.36,
     )
-    assert math.isclose(construction.shape.pressure.x[-1], 64.15586, rel_tol=1.0e-3)
-    assert math.isclose(-construction.shape.pressure.y[-1], 12.97935, rel_tol=1.0e-3)
+    assert math.isclose(construction.shape.pressure_surface.x[-1], 64.15586, rel_tol=1.0e-3)
+    assert math.isclose(-construction.shape.pressure_surface.y[-1], 12.97935, rel_tol=1.0e-3)
     assert math.isclose(construction.actual_flow_turning_increment, 0.09990, rel_tol=1.0e-4)
 
 
@@ -72,6 +72,7 @@ def test_conical_nozzle_uses_nasa_area_mach_relation():
         ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
         outlet_metal_angle=outlet_metal_angle,
         half_cone_metal_angle=half_cone_metal_angle,
+        number_of_nodes=51,
         gamma=gamma,
     )
     shape = construction.shape
@@ -93,12 +94,16 @@ def test_conical_nozzle_uses_nasa_area_mach_relation():
         rel_tol=1.0e-11,
     )
     assert math.isclose((shape.exit_opening / shape.throat_width) ** 2, expected_area_ratio, rel_tol=1.0e-14)
-    assert math.isclose(shape.pressure.x[-1], expected_divergent_length, rel_tol=1.0e-14)
-    assert math.isclose(shape.suction.x[-1] - shape.pressure.x[-1], expected_straight_length, rel_tol=1.0e-14)
-    assert np.allclose(shape.suction.y[1:], 0.5 * expected_exit_diameter_ratio)
+    assert math.isclose(shape.pressure_surface.x[-1], expected_divergent_length, rel_tol=1.0e-14)
+    assert math.isclose(shape.suction_surface.x[-1] - shape.pressure_surface.x[-1], expected_straight_length, rel_tol=1.0e-14)
+    assert np.allclose(shape.suction_surface.y[50:], 0.5 * expected_exit_diameter_ratio)
+    assert np.allclose(
+        shape.pressure_surface.absolute_flow_mach,
+        [supersonic_mach_from_area_ratio((2.0 * radius) ** 2, gamma) for radius in -shape.pressure_surface.y],
+    )
     assert shape.throat_width == 1.0
     assert shape.coordinate_scale == "throat diameter"
-    assert construction.pressure_point_count == 2
+    assert construction.pressure_point_count == 51
     assert construction.actual_flow_turning_increment is None
 
 
@@ -137,18 +142,20 @@ def test_stores_corrected_uncorrected_and_dimensional_shapes():
     stator = make_stator()
     assert stator.uncorrected_shape.coordinate_scale == "throat half-width"
     assert stator.corrected_shape.coordinate_scale == "throat half-width"
-    assert len(stator.suction_boundary_layer.s_over_chord) == len(stator.uncorrected_shape.suction.x)
-    assert len(stator.suction_boundary_layer_marching.s_over_chord) == 81
-    assert len(stator.uncorrected_shape.pressure.x) == stator.pressure_number_of_stations
-    assert len(stator.corrected_shape.suction.x) == (len(stator.uncorrected_shape.suction.x) + 2)
+    assert len(stator.suction_boundary_layer.s_over_chord) == len(stator.uncorrected_shape.suction_surface.x)
+    assert stator.suction_boundary_layer_marching is stator.suction_boundary_layer
+    assert stator.pressure_boundary_layer_marching is stator.pressure_boundary_layer
+    assert len(stator.suction_boundary_layer_marching.s_over_chord) == 2 * stator.number_of_nodes - 1
+    assert len(stator.uncorrected_shape.pressure_surface.x) == stator.pressure_number_of_nodes
+    assert len(stator.corrected_shape.suction_surface.x) == (len(stator.uncorrected_shape.suction_surface.x) + 2)
     assert stator.corrected_shape.spacing > stator.uncorrected_shape.spacing
     assert stator.corrected_dimensional_shape.throat_width > stator.uncorrected_dimensional_shape.throat_width
     assert math.isclose(
         stator.physical_chord, stator.uncorrected_shape.chord * stator.throat_half_width_scale, rel_tol=1.0e-12
     )
     assert stator.outlet_metal_angle == stator.ideal_outlet_absolute_flow_angle
-    assert stator.uncorrected_shape.pressure.absolute_flow_mach is not None
-    assert stator.uncorrected_shape.pressure.relative_flow_mach is None
+    assert stator.uncorrected_shape.pressure_surface.absolute_flow_mach is not None
+    assert stator.uncorrected_shape.pressure_surface.relative_flow_mach is None
     assert stator.pressure_boundary_layer.freestream_absolute_flow_mach is not None
     assert stator.pressure_boundary_layer.freestream_relative_flow_mach is None
 
@@ -157,7 +164,6 @@ def test_conical_contour_reuses_bl_mixing_and_plotting_pipeline():
     stator = make_stator(
         throat_height=None,
         contour_method="conical",
-        flow_turning_increment=None,
         half_cone_metal_angle=15.0,
         trailing_edge_thickness=1.0e-4,
     )
@@ -201,10 +207,10 @@ def test_conical_contour_reuses_bl_mixing_and_plotting_pipeline():
     assert math.isclose(
         stator.mixing_results["subsonic"]["trailing_edge_blockage_ratio"], expected_te_blockage, rel_tol=1.0e-13
     )
-    assert len(stator.uncorrected_shape.pressure.x) == 2
-    assert len(stator.uncorrected_shape.suction.x) == 12
-    assert len(stator.corrected_shape.suction.x) == 14
-    assert stator.boundary_layer_suction_station_count == 81
+    assert len(stator.uncorrected_shape.pressure_surface.x) == stator.number_of_nodes
+    assert len(stator.uncorrected_shape.suction_surface.x) == 2 * stator.number_of_nodes - 1
+    assert len(stator.corrected_shape.suction_surface.x) == 2 * stator.number_of_nodes + 1
+    assert stator.boundary_layer_suction_station_count == 2 * stator.number_of_nodes - 1
     assert math.isclose(
         stator.suction_boundary_layer_marching.freestream_absolute_flow_mach[-1],
         stator.ideal_outlet_absolute_flow_mach,
@@ -220,7 +226,6 @@ def test_conical_contour_supports_laminar_transition_mode():
     stator = make_stator(
         throat_height=None,
         contour_method="conical",
-        flow_turning_increment=None,
         half_cone_metal_angle=15.0,
         boundary_layer_mode="laminar_then_turbulent",
         initial_turbulent_displacement_thickness=None,
@@ -234,18 +239,13 @@ def test_conical_contour_supports_laminar_transition_mode():
     ("overrides", "message"),
     [
         ({"throat_height": None}, "requires a positive finite throat_height"),
-        ({"flow_turning_increment": None}, "requires flow_turning_increment"),
         (
-            {"contour_method": "conical", "throat_height": None, "flow_turning_increment": None},
+            {"contour_method": "conical", "throat_height": None},
             "requires half_cone_metal_angle",
         ),
         ({"half_cone_metal_angle": 15.0}, "only valid"),
         (
-            {"contour_method": "conical", "throat_height": None, "half_cone_metal_angle": 15.0},
-            "flow_turning_increment is only valid",
-        ),
-        (
-            {"contour_method": "conical", "flow_turning_increment": None, "half_cone_metal_angle": 15.0},
+            {"contour_method": "conical", "half_cone_metal_angle": 15.0},
             "throat_height is only valid",
         ),
     ],
@@ -255,16 +255,24 @@ def test_contour_modes_require_only_their_own_inputs(overrides, message):
         make_stator(**overrides)
 
 
-def test_stator_station_count_only_controls_dense_bl_march():
-    coarse = make_stator(number_of_stations=57)
-    fine = make_stator(number_of_stations=151)
+def test_stator_boundary_layer_uses_the_fixed_geometry_mesh():
+    coarse = make_stator(number_of_nodes=31)
+    fine = make_stator(number_of_nodes=61)
 
-    assert np.array_equal(coarse.uncorrected_shape.pressure.x, fine.uncorrected_shape.pressure.x)
-    assert np.array_equal(coarse.uncorrected_shape.suction.x, fine.uncorrected_shape.suction.x)
-    assert len(coarse.corrected_shape.suction.x) == (len(coarse.uncorrected_shape.suction.x) + 2)
-    assert coarse.boundary_layer_suction_station_count == 57
-    assert fine.boundary_layer_suction_station_count == 151
-    assert len(fine.suction_boundary_layer.s_over_chord) == len(fine.uncorrected_shape.suction.x)
+    assert coarse.pressure_boundary_layer is coarse.pressure_boundary_layer_marching
+    assert coarse.suction_boundary_layer is coarse.suction_boundary_layer_marching
+    assert len(coarse.corrected_shape.suction_surface.x) == (len(coarse.uncorrected_shape.suction_surface.x) + 2)
+    assert coarse.boundary_layer_pressure_station_count == coarse.number_of_nodes
+    assert coarse.boundary_layer_suction_station_count == 2 * coarse.number_of_nodes - 1
+    assert fine.boundary_layer_pressure_station_count == fine.number_of_nodes
+    assert fine.boundary_layer_suction_station_count == 2 * fine.number_of_nodes - 1
+    assert coarse.actual_flow_turning_increment > fine.actual_flow_turning_increment
+
+
+@pytest.mark.parametrize("number_of_nodes", [19, 20.5, True])
+def test_stator_number_of_nodes_must_be_an_integer_at_least_twenty(number_of_nodes):
+    with pytest.raises(ValueError, match="number_of_nodes"):
+        make_stator(number_of_nodes=number_of_nodes)
 
 
 def test_subsonic_axial_flow_still_has_subsonic_mixing_solution():
@@ -301,8 +309,8 @@ def test_trailing_edge_thickness_uses_nasa_tm_x_2343_afmix_blockage():
     # AFMIX treats TE as a downstream blockage/loss input. It must therefore
     # change the mixed state without silently modifying the MOC geometry,
     # boundary-layer correction, throat sizing, or dimensional scale.
-    assert np.array_equal(finite.uncorrected_shape.pressure.x, sharp.uncorrected_shape.pressure.x)
-    assert np.array_equal(finite.corrected_shape.suction.y, sharp.corrected_shape.suction.y)
+    assert np.array_equal(finite.uncorrected_shape.pressure_surface.x, sharp.uncorrected_shape.pressure_surface.x)
+    assert np.array_equal(finite.corrected_shape.suction_surface.y, sharp.corrected_shape.suction_surface.y)
     assert finite.throat_width == sharp.throat_width
     assert finite.real_outlet_absolute_flow_mach != sharp.real_outlet_absolute_flow_mach
     assert finite.real_outlet_absolute_flow_angle != sharp.real_outlet_absolute_flow_angle
@@ -321,7 +329,7 @@ def test_trailing_edge_thickness_uses_nasa_tm_x_2343_afmix_blockage():
         rel_tol=1.0e-12,
     )
 
-    # Independently reconstruct the subsonic root from the variables named in
+    # Independently reconstruct the subsonic solution from the variables named in
     # the FORTRAN listing. This guards the actual A/A1 use, rather than merely
     # checking that a nonzero input perturbs the answer.
     gamma = finite.gamma
@@ -391,7 +399,7 @@ def test_coupled_stator_flag_requires_outlet_metal_angle_iteration():
         make_stator(match_real_outlet_absolute_flow_mach=True)
 
 
-def test_coupled_stator_iteration_supports_supersonic_root():
+def test_coupled_stator_iteration_supports_supersonic_solution():
     stator = make_stator(
         requested_outlet_absolute_flow_mach=2.0,
         requested_outlet_absolute_flow_angle=30.0,
@@ -408,7 +416,6 @@ def test_coupled_conical_iteration_varies_ideal_absolute_flow_mach():
     stator = make_stator(
         throat_height=None,
         contour_method="conical",
-        flow_turning_increment=None,
         half_cone_metal_angle=15.0,
         iterate_outlet_metal_angle=True,
         match_real_outlet_absolute_flow_mach=True,
@@ -432,7 +439,7 @@ def test_plot_uses_rotated_geometry_and_returns_four_lines():
     assert figure is axes.figure
     assert len(axes.lines) == 4
 
-    pressure = stator.dimensional_shapes.uncorrected.pressure
+    pressure = stator.dimensional_shapes.uncorrected.pressure_surface
     angle = math.radians(stator.outlet_metal_angle)
     expected_axial = 1000.0 * (pressure.x[0] * math.cos(angle) - pressure.y[0] * math.sin(angle))
     assert math.isclose(axes.lines[0].get_xdata()[0], expected_axial, rel_tol=1.0e-12)

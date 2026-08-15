@@ -12,17 +12,17 @@ class NozzleShape:
     """One two-dimensional stator-nozzle passage in one length scale.
 
     The two surfaces are the walls of a symmetric sharp-throat MOC or conical
-    passage. They are named ``pressure`` and ``suction`` after rotation into
-    the turbine blade row, even though each unrotated construction is a
-    symmetric nozzle.
+    passage. They are named ``pressure_surface`` and ``suction_surface`` after
+    rotation into the turbine blade row, even though each unrotated
+    construction is a symmetric nozzle.
 
     ``throat_width`` is the full opening between the two plotted walls. The
     nondimensional MOC geometry uses throat half-width and therefore has
     ``throat_width == 2``. The axisymmetric conical meridional contour uses
     throat diameter and therefore has ``throat_width == 1``.
 
-    :ivar pressure: Pressure-side wall after rotation into the turbine frame.
-    :ivar suction: Suction-side wall after rotation into the turbine frame.
+    :ivar pressure_surface: Pressure-side wall after rotation into the turbine frame.
+    :ivar suction_surface: Suction-side wall after rotation into the turbine frame.
     :ivar float chord: Axial nozzle chord in the active length scale.
     :ivar float throat_width: Full ideal throat opening in the active length scale.
     :ivar float exit_opening: Full exit opening in the active length scale.
@@ -30,8 +30,8 @@ class NozzleShape:
     :ivar str coordinate_scale: Human-readable description of the active length scale.
     """
 
-    pressure: SurfaceCoordinates
-    suction: SurfaceCoordinates
+    pressure_surface: SurfaceCoordinates
+    suction_surface: SurfaceCoordinates
     chord: float
     throat_width: float
     exit_opening: float
@@ -48,8 +48,8 @@ class NozzleShape:
         """
 
         return NozzleShape(
-            pressure=self.pressure.scaled(factor),
-            suction=self.suction.scaled(factor),
+            pressure_surface=self.pressure_surface.scaled(factor),
+            suction_surface=self.suction_surface.scaled(factor),
             chord=self.chord * factor,
             throat_width=self.throat_width * factor,
             exit_opening=self.exit_opening * factor,

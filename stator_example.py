@@ -33,13 +33,11 @@ moc_stator = SupersonicStatorNozzle(
     # Physical metal thickness used by the NASA TM X-2343 AFMIX blockage terms.
     # It changes mixed-out conditions, not the stored sharp-profile contour.
     trailing_edge_thickness=1.0e-4,  # [m]; default: 0.0
-    # Choose exactly one contour method and provide only its own resolution
-    # input. For a conical nozzle, use contour_method="conical", omit both
-    # throat_height and flow_turning_increment, and provide
+    # Choose exactly one contour method. For a conical nozzle, use
+    # contour_method="conical", omit throat_height, and provide
     # half_cone_metal_angle (for example 15).
     contour_method="moc",  # default: "moc"
-    flow_turning_increment=0.5,  # required for MOC; degrees
-    number_of_stations=101,  # default: 101; temporary BL march only
+    number_of_nodes=101,  # default: 101; nodes on each nozzle segment and BL mesh
     # False is the zero-deviation assumption. Set True to vary the outlet metal
     # angle until corrected aftermixing reaches the requested absolute flow angle.
     iterate_outlet_metal_angle=False,  # default: False
@@ -53,7 +51,7 @@ moc_stator = SupersonicStatorNozzle(
     initial_turbulent_momentum_thickness=5.0e-6,  # [m]
     # Axial Mach is subsonic in this highly turned example, so only the
     # ordinary subsonic mixed solution is available.
-    mixing_solution="subsonic",  # force subsonic root; omit for automatic selection
+    mixing_solution="subsonic",  # force subsonic solution; omit for automatic selection
 )
 
 print("\nMOC stator nozzle")
@@ -68,7 +66,7 @@ print(f"Ideal absolute outlet flow Mach: {moc_stator.ideal_outlet_absolute_flow_
 print(f"Ideal absolute outlet flow angle: {moc_stator.ideal_outlet_absolute_flow_angle:.3f} deg")
 print(f"Real absolute outlet flow angle: {moc_stator.real_outlet_absolute_flow_angle:.3f} deg")
 print(f"Ideal absolute outlet axial flow Mach: {moc_stator.ideal_outlet_absolute_axial_flow_mach:.3f}")
-print(f"Shockless supersonic mixing root available: {moc_stator.supersonic_mixing_available}")
+print(f"Shockless supersonic mixing solution available: {moc_stator.supersonic_mixing_available}")
 print(f"Calculated chord Reynolds number: {moc_stator.chord_reynolds_number:.3e}")
 
 # Rotation into axial/tangential turbine coordinates occurs only for plotting;
@@ -85,8 +83,7 @@ moc_stator.plot(
 # ---------------------------------------------------------------------------
 # This case uses the same operating point and fluid so that its circular
 # throat and contour can be compared directly with the rectangular MOC case.
-# throat_height and flow_turning_increment are intentionally absent: neither is
-# part of the conical input set.
+# throat_height is intentionally absent because it is not part of the conical input set.
 conical_stator = SupersonicStatorNozzle(
     requested_outlet_absolute_flow_mach=1.77,
     requested_outlet_absolute_flow_angle=70.0,  # requested absolute outlet flow angle
@@ -98,13 +95,13 @@ conical_stator = SupersonicStatorNozzle(
     trailing_edge_thickness=1.0e-4,  # [m]; default: 0.0
     contour_method="conical",
     half_cone_metal_angle=15.0,  # required conical divergent half-angle
-    number_of_stations=101,  # temporary BL march only
+    number_of_nodes=101,  # nodes on each divergent/straight segment and BL mesh
     iterate_outlet_metal_angle=False,
     match_real_outlet_absolute_flow_mach=False,
     boundary_layer_mode="fully_turbulent",
     initial_turbulent_displacement_thickness=2.0e-5,  # [m]
     initial_turbulent_momentum_thickness=5.0e-6,  # [m]
-    mixing_solution="subsonic",  # force subsonic root; omit for automatic selection
+    mixing_solution="subsonic",  # force subsonic solution; omit for automatic selection
 )
 
 print("\nConical de Laval stator nozzle")
@@ -120,7 +117,7 @@ print(f"Ideal absolute outlet flow Mach: {conical_stator.ideal_outlet_absolute_f
 print(f"Ideal absolute outlet flow angle: {conical_stator.ideal_outlet_absolute_flow_angle:.3f} deg")
 print(f"Real absolute outlet flow angle: {conical_stator.real_outlet_absolute_flow_angle:.3f} deg")
 print(f"Ideal absolute outlet axial flow Mach: {conical_stator.ideal_outlet_absolute_axial_flow_mach:.3f}")
-print(f"Shockless supersonic mixing root available: {conical_stator.supersonic_mixing_available}")
+print(f"Shockless supersonic mixing solution available: {conical_stator.supersonic_mixing_available}")
 print(f"Calculated chord Reynolds number: {conical_stator.chord_reynolds_number:.3e}")
 
 # The same plot method rotates the meridional conical contour by the stator

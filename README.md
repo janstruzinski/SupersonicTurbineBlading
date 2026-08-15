@@ -7,7 +7,7 @@ turbine rotor sections and supersonic stator nozzles. It combines method-of-char
 design procedures with boundary-layer corrections. The library is largely based on old NASA Fortran codes.
 
 The package is intended for aerospace and turbomachinery engineers who need a preliminary design tool.
-It produces blade and nozzle coordinates, the principal quantities and checks needed
+It produces blade and nozzle coordinates, the principal quantities and design checks needed
 to assess a candidate geometry before higher-fidelity CFD and experimental work.
 
 ## General Overview
@@ -62,7 +62,7 @@ The package also exposes result containers useful in engineering scripts:
 |---|--------------------------------------------------------------------------------------------|
 | `FluidState` | Thermodynamic and transport properties at one temperature and pressure.                    |
 | `SurfaceCoordinates` | Coordinates, framed flow-Mach array and surface `metal_angle`.                              |
-| `BladeShape`, `NozzleShape` | Pressure and suction surfaces plus passage dimensions in non-dimensional scale. |
+| `BladeShape`, `NozzleShape` | `pressure_surface`, `suction_surface` and nondimensional passage dimensions. |
 | `DimensionalBladeShapes`, `DimensionalNozzleShapes` | Geometry in metres. |
 | `BoundaryLayerResult` | Boundary-layer thicknesses, freestream flow Mach and transition or separation data.        |
 | `FlowStateTable` | Printable comparison of the principal rotor flow states in both reference frames. |
@@ -90,8 +90,7 @@ SupersonicTurbineBlading/
 |   `-- stator_nozzle.py
 |-- common_results.py
 |-- fluid.py
-|-- gas_dynamics.py
-`-- geometry_utils.py
+`-- gas_dynamics.py
 
 rotor_example.py
 stator_example.py
@@ -99,8 +98,8 @@ tests/
 ```
 
 The `rotor` and `stator` folders contain the row-specific design procedures. The `boundary_layer` folder contains the
-viscous integral solver shared by both rows. Fluid properties, perfect-gas relations, geometry-grid operations and
-common result containers are kept in the package root so the rotor and stator use the same definitions.
+viscous integral solver shared by both rows. Fluid properties, perfect-gas relations and common result containers are
+kept in the package root so the rotor and stator use the same definitions.
 
 ## Installation
 
@@ -110,8 +109,8 @@ Install the latest version directly from the GitHub repository with:
 pip3 install git+https://github.com/janstruzinski/SupersonicTurbineBlading.git
 ```
 
-This also installs the numerical dependencies declared by the package. To install a local copy instead, run the
-following command from the project folder:
+This also installs CoolProp, NumPy, SciPy and Matplotlib as declared by the package. To install a local copy instead,
+run the following command from the project folder:
 
 ```text
 python -m pip install .
@@ -235,7 +234,7 @@ common_rotor_inputs = dict(
     fluid=working_fluid,
     inlet_total_temperature=1000.0,         # absolute total temperature, K
     inlet_total_pressure=5.0e6,             # absolute total pressure, Pa
-    flow_turning_increment=0.1,              # optional MOC resolution; default 0.1 degrees
+    number_of_nodes=101,                     # optional nodes per MOC transition and circular arc
     leading_edge_thickness_over_total_pitch=0.07,
     use_leading_edge_entry_correction=True,
     calculate_starting=True,
@@ -277,9 +276,12 @@ print(blade.flow_state_table)
 
 # Ideal coordinates divided by r*
 ideal_shape = blade.uncorrected_shape
-pressure_x = ideal_shape.pressure.x
-pressure_y = ideal_shape.pressure.y
-pressure_relative_flow_mach = ideal_shape.pressure.relative_flow_mach
+pressure_x = ideal_shape.pressure_surface.x
+pressure_y = ideal_shape.pressure_surface.y
+pressure_relative_flow_mach = ideal_shape.pressure_surface.relative_flow_mach
+suction_x = ideal_shape.suction_surface.x
+suction_y = ideal_shape.suction_surface.y
+suction_relative_flow_mach = ideal_shape.suction_surface.relative_flow_mach
 
 # Ideal coordinates in metres
 ideal_shape_m = blade.dimensionalize().uncorrected
@@ -309,7 +311,7 @@ arcs. The most important optional inputs used above are:
 | Input | Meaning                                                                                       |
 |---|-----------------------------------------------------------------------------------------------|
 | `requested_outlet_*_flow_mach` | Optional outlet Mach in the selected input frame; `None` selects impulse flow. |
-| `flow_turning_increment` | Maximum MOC turning step in $(0,1]$ degrees; default 0.1. |
+| `number_of_nodes` | Nodes per nonzero MOC transition and constant-Mach circular arc; default 101. |
 | `leading_edge_thickness_over_total_pitch` | Ratio $t_{\mathrm{LE}}/G^{\ast}_{\mathrm{total}}$; default zero. |
 | `use_leading_edge_entry_correction` | Corrects inlet Mach and flow angle for finite thickness; default `True`. |
 | `calculate_starting` | Runs the NASA TN D-4421 supersonic-starting feasibility calculation; default `True`.          |
@@ -328,6 +330,7 @@ Useful properties available after construction include:
 | `ideal_outlet_absolute_flow_mach`, `ideal_outlet_absolute_flow_angle` | Premixing absolute outlet flow state. |
 | `ideal_outlet_relative_flow_mach`, `ideal_outlet_relative_flow_angle` | Premixing relative outlet flow state. |
 | `outlet_metal_angle` | Outlet metal angle in the stationary machine frame. |
+| `max_flow_turning_increment` | Largest turning increment between adjacent MOC nodes, in degrees. |
 | `uncorrected_shape` | Ideal surfaces, chord and open pitches in one `BladeShape`.        |
 | `physical_total_pitch`, `physical_passage_pitch` | Total and open inlet pitches in metres. |
 | `sonic_radius_scale`, `physical_chord`, `chord_reynolds_number` | Dimensional scale and inlet-based Reynolds number. |
@@ -341,8 +344,9 @@ an aligned three-column engineering summary. The rows proceed from the ideal ups
 passage-entry state, the ideal premixing outlet state and the real aftermixed outlet state. Every angle row precedes
 the Mach-number row at the same station.
 
-Each rotor `SurfaceCoordinates` object provides `x`, `y`, `relative_flow_mach` and `metal_angle` arrays at matching
-stations. `absolute_flow_mach` is `None` for these surfaces. The local `metal_angle` array is stored in degrees.
+`BladeShape.pressure_surface` and `BladeShape.suction_surface` are the two rotor `SurfaceCoordinates` objects. Each
+provides `x`, `y`, `relative_flow_mach` and `metal_angle` arrays at matching stations. `absolute_flow_mach` is `None`
+for these surfaces. The local `metal_angle` array is stored in degrees.
 
 #### Theory of `SupersonicRotorBlade`
 
@@ -426,6 +430,15 @@ the characteristic relations and rotated into the required relative flow directi
 constant-Mach vortex arcs; short uniform-flow extensions complete the suction surface where required. The resulting
 pressure and suction arrays bound one open periodic passage.
 
+Every nonzero inlet or outlet transition and each constant-Mach circular arc uses `number_of_nodes` nodes. For a
+region with total flow turning $\Delta\phi$, the resulting local increment is
+
+$$\delta\phi=\frac{|\Delta\phi|}{N-1},$$
+
+where $N$ is `number_of_nodes`. Because $N$ remains fixed, the node positions move continuously when an iterative
+trial changes the outlet Mach or metal angle. `max_flow_turning_increment` stores the largest local increment across
+the four transitions and two circular arcs for the final design.
+
 `lower_surface_relative_flow_mach` and `upper_surface_relative_flow_mach` strongly influence the loading distribution,
 peak surface Mach, thickness, chord and solidity. They should be treated as preliminary blade-design variables.
 
@@ -499,8 +512,8 @@ The ideal rotor design follows this sequence:
 
 1. `rotor_blade.py` validates one complete flow-input frame and constructs the paired inlet state in the other frame.
 2. The finite-thickness entry model supplies the Mach and angle at the open passage entrance.
-3. `rotor_geometry.py` converts the four design Mach numbers to Prandtl-Meyer variables, builds the inlet/outlet
-   transitions and vortex arcs, and returns a nondimensional `BladeShape`.
+3. `rotor_geometry.py` converts the four design Mach numbers to Prandtl-Meyer variables, builds every transition and
+   vortex arc on its fixed-node mesh, and returns a nondimensional `BladeShape`.
 4. Mean radius and blade count establish pitch, $r^{\ast}$, physical chord and Reynolds number.
 5. `rotor_starting.py` optionally evaluates the starting limit.
 6. `rotor_results.py` and `common_results.py` store the resulting geometry and design checks.
@@ -517,8 +530,7 @@ The files in `rotor/` have the following roles:
 The principal internal calls are `design_ideal_geometry(...)` in `rotor_geometry.py` and
 `calculate_starting_limit(...)` in `rotor_starting.py`. `SupersonicRotorBlade` supplies them with inputs,
 then exposes their results through the public containers.
-`BladeShape.scaled(...)` performs geometry-only scaling, while the public `dimensionalize()` method scales the
-stored geometry to the final machine size.
+`BladeShape.dimensionalize()` method scales the stored geometry to the final machine size.
 
 Additional design steps performed by `rotor_blade.py` are documented in the dedicated sections below.
 
@@ -564,7 +576,7 @@ moc_stator = SupersonicStatorNozzle(
     upstream_total_temperature=900.0,  # K
     upstream_total_pressure=1.0e6,     # Pa
     contour_method="moc",
-    flow_turning_increment=0.5,         # required MOC resolution
+    number_of_nodes=101,                # nodes on each MOC/straight segment
 )
 
 print(moc_stator.total_throat_area)
@@ -581,9 +593,9 @@ ideal_moc = moc_stator.uncorrected_shape
 ideal_moc_m = moc_stator.uncorrected_dimensional_shape
 ```
 
-For the MOC route, `throat_height` is the physical out-of-plane blade span and `flow_turning_increment` must lie in
-$(0,1]$ degrees. The algorithm adjusts the requested increment slightly so that half the exit Prandtl-Meyer angle is
-divided into an integer number of characteristic regions; the value actually used is stored in
+For the MOC route, `throat_height` is the physical out-of-plane blade span. `number_of_nodes` must be an integer of at
+least 20. It sets the number of nodes on the divergent MOC wall and on the following straight wall, including the
+endpoints of each segment. The resulting characteristic turning increment is stored in
 `actual_flow_turning_increment`.
 
 ##### Conical de Laval stator nozzle
@@ -599,6 +611,7 @@ conical_stator = SupersonicStatorNozzle(
     upstream_total_pressure=1.0e6,     # Pa
     contour_method="conical",
     half_cone_metal_angle=15.0,
+    number_of_nodes=101,                # nodes on each divergent/straight segment
 )
 
 print(conical_stator.single_nozzle_throat_area)
@@ -612,8 +625,8 @@ ideal_conical_m = conical_stator.uncorrected_dimensional_shape
 ```
 
 `half_cone_metal_angle` is the divergent-wall half angle from the nozzle axis and must lie between 0 and 90 degrees.
-`throat_height` and `flow_turning_increment` must be omitted for this route because they belong only to the planar MOC
-model. Conversely, `half_cone_metal_angle` must be omitted for an MOC nozzle.
+`throat_height` must be omitted for this route because it belongs only to the planar MOC model. Conversely,
+`half_cone_metal_angle` must be omitted for a MOC nozzle.
 
 Remaining input variables are documented later. Important base-design properties are:
 
@@ -629,7 +642,9 @@ Remaining input variables are documented later. Important base-design properties
 | `ideal_outlet_absolute_flow_mach` | Uniform premixing absolute flow Mach used to construct the contour.  |
 | `uncorrected_shape` | Ideal `NozzleShape` in throat-based nondimensional coordinates.      |
 | `uncorrected_dimensional_shape` | Ideal `NozzleShape` in metres.                                       |
-| `contour_point_count`, `pressure_number_of_stations` | MOC discretization diagnostics. |
+| `number_of_nodes` | Nodes on each MOC, conical or straight-wall segment. |
+| `contour_point_count`, `pressure_number_of_nodes` | Divergent-contour node counts. |
+| `actual_flow_turning_increment` | Derived MOC characteristic turning increment; `None` for conical nozzles. |
 | `required_exit_area_ratio`, `conical_divergent_length` | da Laval nozzle sizing results; `None` for an MOC nozzle. |
 | `physical_chord`, `chord_reynolds_number` | Physical length and sonic-throat Reynolds scale.                     |
 
@@ -672,6 +687,13 @@ $$K_+=\theta+\nu, \qquad K_-=\theta-\nu, \qquad \mu=\sin^{-1}\left(\frac{1}{M}\r
 and the characteristic slopes are formed from $\tan(\theta+\mu)$ and $\tan(\theta-\mu)$. The code uses averages from
 adjacent finite regions when intersecting characteristic lines, consistent with NASA TM X-1502.
 
+With $N$ equal to `number_of_nodes`, the characteristic increment is
+
+$$\Delta\nu=\frac{\nu_e}{2(N-1)}.$$
+
+The throat and exit are included in the $N$ stored divergent-wall nodes. The following straight segment also contains
+$N$ nodes including its shared junction with the MOC contour.
+
 The MOC coordinates use a throat half-width of one, so the full nondimensional opening is two. The physical opening is
 
 $$w^{\ast}=\frac{A^{\ast}_{\mathrm{total}}}{Nh},$$
@@ -706,7 +728,11 @@ $y=\pm0.5\sqrt{A_e/A^{\ast}}$ at the exit. For divergent half-angle $\theta_c$,
 
 $$\frac{L_d}{D^{\ast}}=\frac{\sqrt{A_e/A^{\ast}}-1}{2\tan\theta_c}.$$
 
-The suction wall has the same straight downstream line as used by the MOC contour.
+The suction wall has the same straight downstream line as used by the MOC contour. `number_of_nodes` sets the nodes on
+both the conical divergent segment and this straight segment, including their shared junction. At every divergent node,
+the local circular area ratio is inverted on the supersonic branch to obtain the freestream Mach used by the
+boundary-layer (BL) march. Axial nodes distribution avoids clustering nodes near the throat, where numerical issues with
+BL marching scheme may occur. BL calculations is explained later in the documentation. 
 
 #### Code implementation of `SupersonicStatorNozzle`
 
@@ -714,8 +740,8 @@ The base stator design follows this sequence:
 
 1. `stator_nozzle.py` validates the contour-specific inputs and gets throat flow state.
 2. The choked mass flux determines total and single nozzle throat areas.
-3. For `"moc"`, `stator_geometry.py` builds the characteristic net and retains the final wall contour. For
-   `"conical"`, it evaluates the area ratio, exit radius and straight-wall length.
+3. For `"moc"`, `stator_geometry.py` builds the fixed-node characteristic net and retains the final wall contour. For
+   `"conical"`, it evaluates the area ratio, exit radius and fixed-node straight walls.
 4. The selected throat width or diameter establishes the dimensional coordinate scale.
 5. `stator_results.py` stores the nondimensional and dimensional nozzle shapes.
 
@@ -729,8 +755,9 @@ The files in `stator/` have the following roles:
 
 `design_ideal_stator_nozzle(...)` builds the planar MOC contour and `design_conical_stator_nozzle(...)` builds the
 axisymmetric alternative. Both return an `IdealNozzleConstruction`, which contains a `NozzleShape`.
-`NozzleShape.scaled(...)` changes only length quantities. Each stator `SurfaceCoordinates` object stores
-`absolute_flow_mach`, while `relative_flow_mach` is `None`. The `metal_angle` array remains in degrees.
+`NozzleShape.pressure_surface` and `NozzleShape.suction_surface` contain the two walls.
+`NozzleShape.dimensionalize(...)` scales nozzle to the machine dimensions. Each stator `SurfaceCoordinates` object stores
+`absolute_flow_mach`, while `relative_flow_mach` is `None`. The `metal_angle` array is in degrees.
 
 Additional nozzle design features of `stator_nozzle.py` are documented below.
 
@@ -757,12 +784,12 @@ The solver reconstructs the local edge state from the surface Mach distribution 
 $$\frac{T_e}{T_t}=\frac{1}{1+\frac{\gamma-1}{2}M_e^2}, \qquad
 \frac{p_e}{p_t}=\left(\frac{T_e}{T_t}\right)^{\gamma/(\gamma-1)}.$$
 
-The wall temperature is set equal to total temperature, matching the NASA rotor and stator drivers. The geometry uses
+The wall temperature is set equal to total temperature. The geometry uses
 the frozen reference $\gamma$, while viscosity, heat capacity and conductivity are reevaluated through `Fluid` at the
 local states.
 
 The laminar method applies the Cohen-Reshotko transformation and correlation tables to the momentum integral
-equation. It predicts neutral instability, transition and impending laminar separation. The turbulent method marches
+equation. It predicts neutral instability, transition and laminar separation. The turbulent method marches
 the two coupled Sasman-Cresci integral equations for transformed momentum thickness and form factor with a fourth-order
 Runge-Kutta scheme. At natural transition, or at laminar separation, the code follows the legacy `CTHET=1`
 choice: momentum thickness is conserved and the turbulent march starts immediately.
@@ -771,20 +798,12 @@ Two inlet modes are available in both public classes:
 
 | `boundary_layer_mode` | Required initialization |
 |---|---|
-| `"laminar_then_turbulent"` | Starts with zero thickness and predicts transition. |
+| `"laminar_then_turbulent"` | Starts with zero thickness and predicts transition. | 
 | `"fully_turbulent"` | Requires positive inlet $\delta^{\ast}$ and $\theta$ in metres, with $\delta^{\ast}>\theta$. |
 
 The initial thicknesses are in metres. Each geometry trial divides them by its own physical scale before marching.
-Their ratio is transformed to the incompressible form factor required by the turbulent correlation.
-
-`number_of_stations` is the minimum resolution of the temporary boundary-layer grid and must be at least 20. The grid
-is densified within the original geometry segments determined by MOC. Results are projected back onto the
-original MOC or conical stations for geometry correction, while the dense results remain available for convergence and
-transition diagnostics.
-
-In code, this shared workflow is `densify_surface(...)` -> `solve_boundary_layer(...)` ->
-`project_boundary_layer_result(...)`. The first and third functions preserve the original design stations; only the
-middle function performs the integral march.
+Their ratio is transformed to the incompressible form factor required by the turbulent correlation. Both classes march
+directly on the same fixed-node surface mesh used to store and correct their geometry.
 
 The laminar correlation table is generated to the application limit used by the NASA code: `CORLN=0.50` for rotor
 surfaces and `CORLN=0.16` for a stator nozzle. If the surface solution extends beyond the relevant limit, the code
@@ -803,9 +822,14 @@ The stator march starts at the sonic sharp throat. In natural-transition mode th
 in fully turbulent mode the two specified thicknesses are throat values.
 
 For the symmetric unrotated nozzle, the class performs one march along the upper wall. The pressure-side result is the
-boundary layer ending at the divergent-contour exit; the suction-side result continues along the downstream straight.
-This reproduces the station arrangement of NASA TM X-2343 and avoids two inconsistent solutions on what begins as the
+boundary layer ending at the divergent-contour exit; the suction-side result continues along the downstream straight wall.
+This reproduces the code in NASA TM X-2343 and avoids two inconsistent solutions on what begins as the
 same ideal contour.
+
+The stator boundary-layer solver marches directly on the assembled nozzle surface. `number_of_nodes` sets the
+resolution of each divergent and straight-wall segment and must be an integer of at least 20. Consequently, the BL
+results, ideal geometry and displacement correction all share the same stations. Before the two `AFMIX` exit stations
+are added, a divergent wall contains $N$ nodes and the complete suction wall contains $2N-1$ nodes.
 
 The boundary layer correction is applied in the nozzle transverse direction:
 
@@ -813,26 +837,26 @@ $$y_{\mathrm{pressure,corr}}=y_{\mathrm{pressure}}-\delta^{\ast}, \qquad
 y_{\mathrm{suction,corr}}=y_{\mathrm{suction}}+\delta^{\ast}.$$
 
 It is a vertical offset in nozzle-axis coordinates. The suction-side straight wall segment is
-then extended twice: first to restore the prescribed nozzle installation geometry after adding displacement thickness,
+then extended twice: first by displacement thickness at the end of the symmetrical section,
 and second to account for continued thickness growth along the newly created segment. The corrected exit spacing and
-the extrapolated exit thicknesses are retained for the final mixed-out calculation.
+the exit BL thicknesses are retained for the final mixed-out calculation.
 
 Stator controls and outputs are:
 
 | Input or property | Meaning                                                      |
 |---|--------------------------------------------------------------|
-| `number_of_stations` | Minimum temporary marching resolution; default 101.          |
+| `number_of_nodes` | Nodes on each divergent and straight-wall segment; default 101. |
 | `boundary_layer_mode` | Natural-transition or fully turbulent BL.                    |
 | `initial_turbulent_displacement_thickness` | Input throat $\delta^{\ast}$ in fully turbulent mode, in metres.  |
 | `initial_turbulent_momentum_thickness` | Input throat $\theta$ in fully turbulent mode, in metres. |
-| `pressure_boundary_layer`, `suction_boundary_layer` | Results projected onto stored geometry stations.             |
-| `pressure_boundary_layer_marching`, `suction_boundary_layer_marching` | Dense integration-grid results. |
+| `pressure_boundary_layer`, `suction_boundary_layer` | Results evaluated directly on the nozzle surfaces. |
+| `pressure_boundary_layer_marching`, `suction_boundary_layer_marching` | Aliases of the same stator results. |
 | `corrected_shape`, `corrected_dimensional_shape` | Displacement-corrected geometry in throat units and metres.  |
 | `corrected_exit_displacement_thickness` | Extrapolated final suction-side $\delta^{\ast}$ in metres.        |
 | `corrected_exit_momentum_thickness` | Extrapolated final suction-side $\theta$ in metres.          |
 
-For the conical contour, local Mach on the dense divergent-wall grid is found by inverting the circular area-Mach
-relation. The same integral correction is then applied to its stored meridional walls.
+For the conical contour, local Mach at every divergent-wall node is found by inverting the circular area-Mach relation.
+The same integral correction is then applied to its stored meridional walls.
 
 `stator.plot(dimensional=True)` rotates both the ideal and corrected shapes by `outlet_metal_angle` and displays
 coordinates in millimetres. Stored dimensional arrays remain in metres.
@@ -840,7 +864,7 @@ coordinates in millimetres. Stored dimensional arrays remain in metres.
 #### Rotor boundary-layer correction
 
 The rotor performs independent marches along the pressure and suction surfaces, both beginning at the passage-entry
-state.
+state. Both marches use the stations as MOC for the rotor blade construction. 
 
 The solver returns displacement thickness normal to the local flow. The NASA-style blade-coordinate correction uses
 its vertical component:
@@ -857,20 +881,21 @@ $$t^{\ast}_{\mathrm{TE}}=\max\left[0,
 t^{\ast}_{\mathrm{LE}}-\left(|\Delta y_{p,\mathrm{TE}}|+|\Delta y_{s,\mathrm{TE}}|\right)\right].$$
 
 With legacy pitch closure, the model carries $t^{\ast}_{\mathrm{LE}}$ through to the trailing edge. It varies
-`outlet_metal_angle`, so the requested outlet flow direction is only an initial estimate. The iterative scheme is
-explained later in this documentation.
-In both cases the resulting thickness is used in the rotor mixed-out blockage calculation.
+`outlet_metal_angle`, so the requested outlet flow direction is only an initial estimate and not a strict requirement.
+This iterative scheme is explained later in the documentation. In both cases the resulting thickness is used in the
+rotor mixed-out blockage calculation.
 
 Rotor controls and outputs are:
 
 | Input or property | Meaning                                                            |
 |---|--------------------------------------------------------------------|
-| `number_of_stations` | Minimum temporary stations on each surface; default 101.           |
+| `number_of_nodes` | Nodes per MOC transition and circular arc; default 101. |
+| `max_flow_turning_increment` | Largest final turning increment between adjacent MOC nodes, in degrees. |
 | `boundary_layer_mode` | Natural-transition or fully turbulent BL.                          |
 | `initial_turbulent_displacement_thickness` | Inlet $\delta^{\ast}$ applied to both surfaces, in metres.              |
 | `initial_turbulent_momentum_thickness` | Inlet $\theta$ applied to both surfaces, in metres.                |
-| `pressure_boundary_layer`, `suction_boundary_layer` | Results projected onto the MOC stations. |
-| `pressure_boundary_layer_marching`, `suction_boundary_layer_marching` | Dense integration-grid results. |
+| `pressure_boundary_layer`, `suction_boundary_layer` | Results evaluated directly on the MOC surfaces. |
+| `pressure_boundary_layer_marching`, `suction_boundary_layer_marching` | Aliases of the same rotor results. |
 | `corrected_shape`, `dimensional_shapes.corrected` | Displacement-corrected passage in $r^{\ast}$ units and metres. |
 | `trailing_edge_thickness`, `physical_trailing_edge_thickness` | Remaining trailing-edge metal. |
 | `corrected_pitch_residual` | Corrected outlet pitch minus corrected inlet pitch in $r^{\ast}$ units. |
@@ -914,25 +939,25 @@ where
 
 $$F_s=\frac{\gamma-1}{\gamma+1}q_1^2.$$
 
-The downstream axial critical velocity ratio has two mathematical roots:
+The downstream axial critical velocity ratio has two mathematical solutions:
 
 $$q_{x,2}=\frac{\gamma C}{\gamma+1}\pm
 \sqrt{\left(\frac{\gamma C}{\gamma+1}\right)^2-1+
 \frac{\gamma-1}{\gamma+1}D^2}.$$
 
-The minus sign is the subsonic-axial root. The plus sign is the shockless supersonic-axial root and is available only
-when the premixing axial Mach $M_1\cos\alpha_1$ is at least one. The total downstream critical velocity ratio, ordinary
-Mach and direction are
+The minus sign gives the subsonic-axial solution. The plus sign gives the shockless supersonic-axial solution and is
+available only when the premixing axial Mach $M_1\cos\alpha_1$ is at least one. The total downstream critical velocity
+ratio, ordinary Mach and direction are
 
 $$q_2=\sqrt{q_{x,2}^2+D^2}, \qquad
 M_2=\sqrt{\frac{\frac{2}{\gamma+1}q_2^2}
 {1-\frac{\gamma-1}{\gamma+1}q_2^2}}, \qquad
 \alpha_2=\tan^{-1}\left(\frac{D}{q_{x,2}}\right).$$
 
-By default, `mixing_solution` is omitted and the root is selected automatically. Premixing axial Mach below one uses
-the subsonic root. At axial Mach equal to or greater than one, the shockless supersonic root is used when available.
-Set `mixing_solution="subsonic"` to force the subsonic root. No supersonic override is provided because automatic
-selection already chooses that root whenever it is physical.
+By default, `mixing_solution` is omitted and the solution is selected automatically. Premixing axial Mach below one
+uses the subsonic solution. At axial Mach equal to or greater than one, the shockless supersonic solution is used when
+available. Set `mixing_solution="subsonic"` to force the subsonic solution. No supersonic override is provided because
+automatic selection already chooses that solution whenever it is physical.
 
 #### Rotor aftermixing
 
@@ -941,17 +966,17 @@ and the calculated trailing-edge thickness. Each available mixed relative state 
 frame by adding wheel speed to its tangential velocity.
 
 `mixing_results["subsonic"]` and `mixing_results["supersonic"]` contain explicitly named fields for each available
-root. They include `real_outlet_absolute_flow_mach`, `real_outlet_absolute_axial_flow_mach`,
+solution. They include `real_outlet_absolute_flow_mach`, `real_outlet_absolute_axial_flow_mach`,
 `real_outlet_absolute_flow_angle`, `real_outlet_relative_flow_mach`, `real_outlet_relative_axial_flow_mach` and
-`real_outlet_relative_flow_angle`. The selected-root properties are:
+`real_outlet_relative_flow_angle`. The selected-solution properties are:
 
 | Property | Meaning |
 |---|---|
 | `real_outlet_absolute_flow_mach`, `real_outlet_absolute_flow_angle` | Selected absolute mixed state. |
 | `real_outlet_relative_flow_mach`, `real_outlet_relative_flow_angle` | Selected relative mixed state. |
 | `ideal_outlet_relative_axial_flow_mach` | Relative axial Mach before mixing. |
-| `supersonic_mixing_available` | Whether the shockless root is physically available. |
-| `mixing_solution` | Root selected for the final design. |
+| `supersonic_mixing_available` | Whether the shockless supersonic solution is physically available. |
+| `mixing_solution` | Solution selected for the final design. |
 
 #### Stator aftermixing
 
@@ -959,17 +984,17 @@ The stator is stationary, so the nozzle-axis velocity is already in the absolute
 physical metal thickness in metres and contributes to $D_{\mathrm{TE}}$. As in NASA TM X-2343, it affects the mixed-out
 conservation calculation only.
 
-`uncorrected_mixing_results` is a diagnostic calculation at the original exit stations and ideal spacing uncorrected by
-the boundary layer. `mixing_results` uses the corrected spacing and nozzle trailing edge thicknesses. The selected flow
-solution is stored under `mixing_solution` as `supersonic` or `subsonic`. The selected final values are available as
-`real_outlet_absolute_flow_mach` and `real_outlet_absolute_flow_angle`, with
-`ideal_outlet_absolute_axial_flow_mach` and `supersonic_mixing_available` providing additional information.
+`uncorrected_mixing_results` is a diagnostic calculation at the original exit stations and ideal trailing edge nozzle
+thickness uncorrected by the boundary layer. `mixing_results` uses the corrected spacing and nozzle trailing edge
+thicknesses. The selected flow solution is stored under `mixing_solution` as `supersonic` or `subsonic`.
+The selected final values are available as `real_outlet_absolute_flow_mach` and `real_outlet_absolute_flow_angle`,
+with `ideal_outlet_absolute_axial_flow_mach` and `supersonic_mixing_available` providing additional information.
 
 ### Iterative schemes
 
 By default, the requested outlet flow angle and Mach define the ideal premixing state. The optional matching schemes
-instead interpret one or both requested quantities as real aftermixed targets and vary the metal angle or ideal flow
-Mach needed to reach them. A separate rotor pitch-closure scheme varies the outlet metal angle to match inlet and
+instead interpret one or both requested quantities as real aftermixed targets and vary the metal angle or passage outlet
+flow Mach needed to reach them. A separate rotor pitch-closure scheme varies the outlet metal angle to match inlet and
 outlet pitch.
 
 #### Rotor iterative schemes
@@ -995,7 +1020,8 @@ $$\alpha_{\mathrm{mixed}}-\alpha_{\mathrm{requested}}=0 \quad \text{(absolute in
 
 $$\beta_{\mathrm{mixed}}-\beta_{\mathrm{requested}}=0 \quad \text{(relative input set)}.$$
 
-The solver scans the admissible negative outlet-metal-angle range, brackets the residual and bisects it.
+The solver starts from the requested relative outlet direction. SciPy's bounded, derivative-based nonlinear
+least-squares method minimizes the residual.
 
 If a requested outlet Mach is supplied without Mach matching, it remains the specified ideal premixing Mach in the
 input reference frame. For the absolute input set, `ideal_outlet_relative_flow_mach` is recovered at each trial from
@@ -1014,9 +1040,9 @@ requested_outlet_absolute_flow_mach=1.20  # desired absolute mixed Mach
 ```
 
 For the relative input set, use `requested_outlet_relative_flow_mach` instead; the same `match_real_outlet_mach` flag
-then interprets it as a relative aftermixed target. A damped two-variable Newton solve varies
-`ideal_outlet_relative_flow_mach` and `outlet_metal_angle` until the angle and Mach residuals vanish in the selected
-input frame. Local derivative-free refinement is used if MOC station-count changes stall the Newton solve:
+then interprets it as a relative aftermixed target. SciPy's bounded, derivative-based nonlinear least-squares method
+varies `ideal_outlet_relative_flow_mach` and `outlet_metal_angle` until the angle and Mach residuals vanish in the
+selected input frame:
 
 $$M_{\mathrm{mixed},f}-M_{\mathrm{target},f}=0, \qquad
 \theta_{\mathrm{mixed},f}-\theta_{\mathrm{target},f}=0,$$
@@ -1067,10 +1093,9 @@ to vary `outlet_metal_angle` until `real_outlet_absolute_flow_angle` reaches the
 
 $$\alpha_{\mathrm{mixed}}-\alpha_{\mathrm{requested}}=0.$$
 
-The solver evaluates feasible metal angles around the target, locates a sign-changing bracket and uses bisection. The
-ideal construction flow Mach remains `requested_outlet_absolute_flow_mach`; the converged metal angle is stored as
-`outlet_metal_angle` and the separately stored zero-deviation flow direction is
-`ideal_outlet_absolute_flow_angle`.
+SciPy's bounded, derivative-based nonlinear least-squares method varies the metal angle from the requested direction.
+The ideal construction flow Mach remains `requested_outlet_absolute_flow_mach`; the converged metal angle is stored as
+`outlet_metal_angle`.
 
 ##### Coupled mixed-flow angle and Mach matching
 
@@ -1081,20 +1106,23 @@ iterate_outlet_metal_angle=True
 match_real_outlet_absolute_flow_mach=True
 ```
 
-to reinterpret `requested_outlet_absolute_flow_mach` as the requested real aftermixed flow Mach. A Newton solve varies
-`outlet_metal_angle` and `ideal_outlet_absolute_flow_mach` until
+to reinterpret `requested_outlet_absolute_flow_mach` as the requested real aftermixed flow Mach. SciPy's bounded,
+derivative-based nonlinear least-squares method varies `outlet_metal_angle` and
+`ideal_outlet_absolute_flow_mach` until
 
 $$M_{\mathrm{mixed}}-M_{\mathrm{requested}}=0, \qquad
 \alpha_{\mathrm{mixed}}-\alpha_{\mathrm{requested}}=0.$$
 
-For every MOC trial, the characteristic contour is rebuilt for the new ideal exit Mach. For every conical trial, the
-area ratio, exit radius and divergent length are rebuilt. The converged premixing value is stored as
-`ideal_outlet_absolute_flow_mach`, while `requested_outlet_absolute_flow_mach` retains the target. The corresponding
-aftermixed value is `real_outlet_absolute_flow_mach`. `match_real_outlet_absolute_flow_mach=True` requires
+For every MOC trial, the nozzle contour is rebuilt for the new ideal (premixed flow) exit Mach. For every conical
+trial, the fixed-node wall, area ratio, exit radius and divergent length are rebuilt. The converged premixing value is
+stored as `ideal_outlet_absolute_flow_mach`, while `requested_outlet_absolute_flow_mach` retains the target. The
+corresponding aftermixed value is `real_outlet_absolute_flow_mach`.
+`match_real_outlet_absolute_flow_mach=True` requires
 `iterate_outlet_metal_angle=True`.
 
-By default, each stator iteration trial selects its mixing root from that trial's
-`ideal_outlet_absolute_axial_flow_mach`. The user can apply `mixing_solution="subsonic"` to every trial.
+By default, each stator iteration trial selects its mixing solution based on that trial's
+`ideal_outlet_absolute_axial_flow_mach`. The user can apply `mixing_solution="subsonic"` to every trial to force
+subsonic mixing solution.
 
 ## License
 

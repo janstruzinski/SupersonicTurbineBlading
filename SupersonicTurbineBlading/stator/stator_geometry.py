@@ -19,8 +19,12 @@ from typing import Literal
 import numpy as np
 
 from ..common_results import SurfaceCoordinates
-from ..gas_dynamics import isentropic_area_ratio, mach_from_prandtl_meyer, prandtl_meyer_angle
-from ..geometry_utils import resample_surface
+from ..gas_dynamics import (
+    isentropic_area_ratio,
+    mach_from_prandtl_meyer,
+    prandtl_meyer_angle,
+    supersonic_mach_from_area_ratio,
+)
 from .stator_results import NozzleShape
 
 ContourMethod = Literal["moc", "conical"]
@@ -53,7 +57,7 @@ class _MocContour:
     :ivar x: Nozzle-axis coordinates divided by throat half-width, -.
     :ivar y: Transverse coordinates divided by throat half-width, -.
     :ivar absolute_flow_mach: Ordinary Mach number at each retained wall station, -.
-    :ivar float actual_flow_turning_increment: Rounded characteristic turning increment, deg.
+    :ivar float actual_flow_turning_increment: Derived characteristic turning increment, deg.
     """
 
     x: np.ndarray
@@ -93,30 +97,31 @@ def _surface(x: np.ndarray, y: np.ndarray, absolute_flow_mach: np.ndarray) -> Su
 
 
 @lru_cache(maxsize=128)
-def _characteristic_contour(ideal_outlet_absolute_flow_mach: float, gamma: float, requested_flow_turning_increment: float) -> _MocContour:
+def _characteristic_contour(
+    ideal_outlet_absolute_flow_mach: float, gamma: float, number_of_nodes: int
+) -> _MocContour:
     """Return the diverging half-contour normalized by throat half-width.
 
-    NASA TM X-1502 first rounds the number of characteristic regions and then
-    adjusts ``delta_v`` so that exactly half the exit Prandtl--Meyer angle is
-    divided into an integer number of increments.  Reproducing that small
-    adjustment is necessary to reproduce the tabulated FORTRAN coordinates.
+    NASA TM X-1502 divides half the exit Prandtl--Meyer angle into equal
+    characteristic increments. ``number_of_nodes`` fixes the resulting wall
+    stations, including the throat and exit, while the increment is retained
+    as a diagnostic.
 
     :param float ideal_outlet_absolute_flow_mach: Supersonic design exit Mach number, -.
     :param float gamma: Frozen specific-heat ratio, -.
-    :param float requested_flow_turning_increment: Maximum requested characteristic turning increment, deg.
+    :param int number_of_nodes: Nodes on the divergent MOC wall, including the throat and exit.
     :return: Diverging upper half-contour normalized by throat half-width.
     :rtype: _MocContour
-    :raises StatorGeometryError: If the requested increment leaves fewer than two characteristic regions.
+    :raises StatorGeometryError: If fewer than two characteristic regions are requested.
     """
 
     # The cache prevents the same MOC net from being rebuilt during nozzle-angle
     # iterations because rotation changes metal direction, not the unrotated
     # characteristic contour.
     exit_nu = float(prandtl_meyer_angle(ideal_outlet_absolute_flow_mach, gamma))
-    requested_increment = math.radians(requested_flow_turning_increment)
-    k_max_original = int(0.5 * exit_nu / requested_increment + 1.5)
+    k_max_original = number_of_nodes
     if k_max_original < 2:
-        raise StatorGeometryError("turning increment is too large for the requested exit Mach")
+        raise StatorGeometryError("number_of_nodes must provide at least two characteristic regions")
     increment = exit_nu / (2.0 * (k_max_original - 1))
     absolute_flow_angle = np.arange(k_max_original, dtype=float) * increment
 
@@ -222,8 +227,7 @@ def design_ideal_stator_nozzle(
     *,
     ideal_outlet_absolute_flow_mach: float,
     outlet_metal_angle: float,
-    flow_turning_increment: float,
-    number_of_stations: int | None = None,
+    number_of_nodes: int,
     gamma: float,
 ) -> IdealNozzleConstruction:
     """Design the uncorrected supersonic passage and straight suction section.
@@ -236,8 +240,7 @@ def design_ideal_stator_nozzle(
 
     :param float ideal_outlet_absolute_flow_mach: Supersonic ideal nozzle exit Mach number, -.
     :param float outlet_metal_angle: Nozzle-axis angle measured from the machine axis, deg.
-    :param float flow_turning_increment: Maximum characteristic turning increment, deg.
-    :param number_of_stations: Optional stored geometry station count; ``None`` preserves legacy output stations.
+    :param int number_of_nodes: Nodes on both the MOC contour and the following straight-wall segment.
     :param float gamma: Frozen specific-heat ratio, -.
     :return: Ideal planar MOC nozzle and discretization diagnostics.
     :rtype: IdealNozzleConstruction
@@ -248,48 +251,30 @@ def design_ideal_stator_nozzle(
         raise StatorGeometryError("ideal_outlet_absolute_flow_mach must be supersonic (> 1)")
     if not math.isfinite(gamma) or gamma <= 1.0:
         raise StatorGeometryError("gamma must be greater than one")
-    if not 0.0 < flow_turning_increment <= 1.0:
-        raise StatorGeometryError("flow_turning_increment must be in (0, 1]")
     if not 0.0 < outlet_metal_angle < 90.0:
         raise StatorGeometryError("outlet_metal_angle must be between 0 and 90")
-    if number_of_stations is not None and (not isinstance(number_of_stations, int) or number_of_stations < 20):
-        raise StatorGeometryError("number_of_stations must be an integer >= 20")
+    if not isinstance(number_of_nodes, int) or isinstance(number_of_nodes, bool) or number_of_nodes < 3:
+        raise StatorGeometryError("number_of_nodes must be an integer >= 3")
 
     # First create the universal sharp-throat contour, then attach the
     # constant-area straight required by AFMIX. Rotation occurs later in
     # ``SupersonicStatorNozzle``, keeping MOC independent of installation angle.
-    contour = _characteristic_contour(float(ideal_outlet_absolute_flow_mach), float(gamma), float(flow_turning_increment))
+    contour = _characteristic_contour(
+        float(ideal_outlet_absolute_flow_mach), float(gamma), number_of_nodes
+    )
     outlet_metal_angle_rad = math.radians(outlet_metal_angle)
     exit_x = float(contour.x[-1])
     exit_y = float(contour.y[-1])
     straight_length = 2.0 * exit_y * math.tan(outlet_metal_angle_rad)
 
-    upper_contour = _surface(
+    stored_contour = _surface(
         np.concatenate(([0.0], contour.x.copy())),
         np.concatenate(([1.0], contour.y.copy())),
         np.concatenate(([1.0], contour.absolute_flow_mach.copy())),
     )
-    if number_of_stations is None:
-        # The original FORTRAN adds ten equal straight-section intervals.
-        # Preserve that exact output when no explicit stored resolution is
-        # requested, including for direct NASA TM X-1502 regression calls.
-        pressure_point_count = len(upper_contour.x)
-        straight_intervals = 10
-        stored_contour = upper_contour
-    else:
-        contour_length = float(np.hypot(np.diff(upper_contour.x), np.diff(upper_contour.y)).sum())
-        total_length = contour_length + straight_length
-        contour_intervals = int(round((number_of_stations - 1) * contour_length / total_length))
-        # Three or more straight intervals leave enough final stations for
-        # AFMIX's N and N-2 BL-growth extrapolation.
-        contour_intervals = min(max(contour_intervals, 2), number_of_stations - 4)
-        pressure_point_count = contour_intervals + 1
-        straight_intervals = number_of_stations - pressure_point_count
-        stored_contour = resample_surface(upper_contour, pressure_point_count)
-
-    straight_x = exit_x + np.linspace(
-        straight_length / straight_intervals, straight_length, straight_intervals, dtype=float
-    )
+    pressure_point_count = number_of_nodes
+    straight_x = np.linspace(exit_x, exit_x + straight_length, number_of_nodes, dtype=float)[1:]
+    straight_intervals = number_of_nodes - 1
     suction_x = np.concatenate((stored_contour.x, straight_x))
     suction_y = np.concatenate((stored_contour.y, np.full(straight_intervals, exit_y)))
     # NOZZL copies the pressure ratio at the final characteristic point onto
@@ -309,8 +294,8 @@ def design_ideal_stator_nozzle(
     spacing = 2.0 * exit_y / math.cos(outlet_metal_angle_rad)
 
     shape = NozzleShape(
-        pressure=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
-        suction=_surface(suction_x, suction_y, suction_absolute_flow_mach),
+        pressure_surface=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
+        suction_surface=_surface(suction_x, suction_y, suction_absolute_flow_mach),
         chord=float(suction_x[-1]),
         throat_width=2.0,
         exit_opening=2.0 * exit_y,
@@ -319,14 +304,19 @@ def design_ideal_stator_nozzle(
     )
     return IdealNozzleConstruction(
         shape=shape,
-        contour_point_count=len(contour.x),
+        contour_point_count=len(stored_contour.x),
         actual_flow_turning_increment=contour.actual_flow_turning_increment,
         pressure_point_count=pressure_point_count,
     )
 
 
 def design_conical_stator_nozzle(
-    *, ideal_outlet_absolute_flow_mach: float, outlet_metal_angle: float, half_cone_metal_angle: float, gamma: float
+    *,
+    ideal_outlet_absolute_flow_mach: float,
+    outlet_metal_angle: float,
+    half_cone_metal_angle: float,
+    number_of_nodes: int,
+    gamma: float,
 ) -> IdealNozzleConstruction:
     """Design an axisymmetric straight-wall (conical) de Laval nozzle.
 
@@ -335,14 +325,16 @@ def design_conical_stator_nozzle(
     ``y = +/-(0.5*sqrt(A_e/A*))``. The divergent walls make the requested
     half-cone angle with the nozzle axis.
 
-    As in the MOC construction, the suction wall continues through ten
-    horizontal intervals after the divergent part. After the complete shape
-    is rotated by ``outlet_metal_angle``, that straight is parallel to the
-    stator metal angle.
+    As in the MOC construction, the suction wall continues through a horizontal
+    segment after the divergent part. Both segments contain
+    ``number_of_nodes`` including their shared junction. After the complete
+    shape is rotated by ``outlet_metal_angle``, that straight is parallel to
+    the stator metal angle.
 
     :param float ideal_outlet_absolute_flow_mach: Supersonic ideal nozzle exit Mach number, -.
     :param float outlet_metal_angle: Nozzle-axis angle measured from the machine axis, deg.
     :param float half_cone_metal_angle: Angle between the divergent wall and nozzle axis, deg.
+    :param int number_of_nodes: Nodes on both the divergent and straight-wall segments.
     :param float gamma: Frozen specific-heat ratio, -.
     :return: Ideal axisymmetric conical nozzle and geometry diagnostics.
     :rtype: IdealNozzleConstruction
@@ -357,6 +349,8 @@ def design_conical_stator_nozzle(
         raise StatorGeometryError("half_cone_metal_angle must be between 0 and 90")
     if not (math.isfinite(outlet_metal_angle) and 0.0 < outlet_metal_angle < 90.0):
         raise StatorGeometryError("outlet_metal_angle must be between 0 and 90")
+    if not isinstance(number_of_nodes, int) or isinstance(number_of_nodes, bool) or number_of_nodes < 3:
+        raise StatorGeometryError("number_of_nodes must be an integer >= 3")
 
     exit_area_ratio = float(isentropic_area_ratio(ideal_outlet_absolute_flow_mach, gamma))
     half_cone_metal_angle_rad = math.radians(half_cone_metal_angle)
@@ -368,29 +362,41 @@ def design_conical_stator_nozzle(
     exit_radius_over_throat_diameter = 0.5 * math.sqrt(exit_area_ratio)
     divergent_length = (exit_radius_over_throat_diameter - 0.5) / math.tan(half_cone_metal_angle_rad)
     straight_length = 2.0 * exit_radius_over_throat_diameter * math.tan(outlet_metal_angle_rad)
-    straight_intervals = 10
-
-    pressure_x = np.asarray([0.0, divergent_length], dtype=float)
-    pressure_y = np.asarray([-0.5, -exit_radius_over_throat_diameter], dtype=float)
-    pressure_absolute_flow_mach = np.asarray([1.0, ideal_outlet_absolute_flow_mach], dtype=float)
-
-    straight_x = divergent_length + np.linspace(
-        straight_length / straight_intervals, straight_length, straight_intervals, dtype=float
+    # A conical wall makes dM/dx singular at the exact sonic throat under the
+    # quasi-one-dimensional area--Mach relation. A fixed fourth-root spacing
+    # retains both endpoints while avoiding an artificial cluster of stations
+    # in that singular neighborhood. The distribution is unchanged between
+    # iterative trials, so only the physical coordinates move.
+    divergent_fraction = np.linspace(0.0, 1.0, number_of_nodes, dtype=float) ** 0.25
+    pressure_x = divergent_length * divergent_fraction
+    pressure_radius = 0.5 + (exit_radius_over_throat_diameter - 0.5) * divergent_fraction
+    pressure_y = -pressure_radius
+    local_area_ratio = np.maximum((2.0 * pressure_radius) ** 2, 1.0)
+    pressure_absolute_flow_mach = np.asarray(
+        [supersonic_mach_from_area_ratio(float(area_ratio), gamma) for area_ratio in local_area_ratio],
+        dtype=float,
     )
-    suction_x = np.concatenate((np.asarray([0.0, divergent_length], dtype=float), straight_x))
+
+    straight_x = np.linspace(
+        divergent_length, divergent_length + straight_length, number_of_nodes, dtype=float
+    )[1:]
+    suction_x = np.concatenate((pressure_x, straight_x))
     suction_y = np.concatenate(
         (
-            np.asarray([0.5, exit_radius_over_throat_diameter], dtype=float),
-            np.full(straight_intervals, exit_radius_over_throat_diameter, dtype=float),
+            pressure_radius,
+            np.full(number_of_nodes - 1, exit_radius_over_throat_diameter, dtype=float),
         )
     )
     suction_absolute_flow_mach = np.concatenate(
-        (np.asarray([1.0, ideal_outlet_absolute_flow_mach], dtype=float), np.full(straight_intervals, ideal_outlet_absolute_flow_mach, dtype=float))
+        (
+            pressure_absolute_flow_mach,
+            np.full(number_of_nodes - 1, ideal_outlet_absolute_flow_mach, dtype=float),
+        )
     )
 
     shape = NozzleShape(
-        pressure=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
-        suction=_surface(suction_x, suction_y, suction_absolute_flow_mach),
+        pressure_surface=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
+        suction_surface=_surface(suction_x, suction_y, suction_absolute_flow_mach),
         chord=float(suction_x[-1]),
         throat_width=1.0,
         exit_opening=2.0 * exit_radius_over_throat_diameter,
@@ -398,5 +404,8 @@ def design_conical_stator_nozzle(
         coordinate_scale="throat diameter",
     )
     return IdealNozzleConstruction(
-        shape=shape, contour_point_count=1, actual_flow_turning_increment=None, pressure_point_count=2
+        shape=shape,
+        contour_point_count=number_of_nodes,
+        actual_flow_turning_increment=None,
+        pressure_point_count=number_of_nodes,
     )

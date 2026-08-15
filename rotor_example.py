@@ -26,8 +26,7 @@ blade = SupersonicRotorBlade(
     inlet_total_temperature=1000.0,  # absolute total temperature [K]
     inlet_total_pressure=5.0e6,  # absolute total pressure [Pa] = 50 bar
     # Some optional controls are shown explicitly below.
-    flow_turning_increment=0.05,  # default: 0.1; controls the MOC geometry
-    number_of_stations=121,  # default: 101; temporary BL march only
+    number_of_nodes=121,  # default: 101; used by each MOC transition and circular arc, and by the BL march
     # Ratio t_LE/G*_total. Zero retains the original sharp-edge passage. Default: 0.0.
     leading_edge_thickness_over_total_pitch=0.07,
     # Transform ideal far-field relative flow to the real passage-entry state. Default: True.
@@ -40,26 +39,11 @@ blade = SupersonicRotorBlade(
 )
 
 print(f"Frozen inlet-static gamma: {blade.gamma:.5f}")
-print(f"Ideal relative inlet flow Mach: {blade.ideal_inlet_relative_flow_mach:.3f}")
-print(f"Real relative passage-entry flow Mach: {blade.real_inlet_relative_flow_mach:.3f}")
-print(f"Ideal relative inlet flow angle: {blade.ideal_inlet_relative_flow_angle:.3f} deg")
-print(f"Real relative passage-entry flow angle: {blade.real_inlet_relative_flow_angle:.3f} deg")
-print(f"Real absolute passage-entry flow Mach: {blade.real_inlet_absolute_flow_mach:.3f}")
-print(f"Real absolute passage-entry flow angle: {blade.real_inlet_absolute_flow_angle:.3f} deg")
-print(f"Inlet metal angle: {blade.inlet_metal_angle:.3f} deg")
-print(f"Outlet metal angle: {blade.outlet_metal_angle:.3f} deg")
-print(f"Ideal absolute outlet flow Mach: {blade.ideal_outlet_absolute_flow_mach:.3f}")
-print(f"Ideal relative outlet flow Mach: {blade.ideal_outlet_relative_flow_mach:.3f}")
-print(f"Premixing rotor-relative axial Mach: {blade.ideal_outlet_relative_axial_flow_mach:.3f}")
-print(f"Ideal absolute outlet flow angle: {blade.ideal_outlet_absolute_flow_angle:.3f} deg")
-print(f"Real absolute outlet flow angle: {blade.real_outlet_absolute_flow_angle:.3f} deg")
 print(f"Solidity: {blade.solidity:.3f}")
 print(blade.flow_state_table)
-print(
-    "Leading & corrected trailing-edge thicknesses [m]: "
-    f"{blade.physical_leading_edge_thickness:.6g}, "
-    f"{blade.physical_trailing_edge_thickness:.6g}"
-)
+print(f"Inlet metal angle: {blade.inlet_metal_angle:.3f} deg")
+print(f"Outlet metal angle: {blade.outlet_metal_angle:.3f} deg")
+print(f"Solidity: {blade.solidity:.3f}")
 if blade.starting_result is not None:
     print(
         "Maximum starting ideal inlet relative flow Mach: "

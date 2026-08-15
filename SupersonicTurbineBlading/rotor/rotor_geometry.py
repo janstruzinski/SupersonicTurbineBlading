@@ -56,28 +56,6 @@ class _RotatedTransition:
     eta: np.ndarray
 
 
-def _integer_steps(angle: float, increment: float, label: str) -> int:
-    """Convert a requested transition turn into an integer number of MOC steps.
-
-    ``ceil`` ensures that the actual local increment never exceeds the user-requested maximum.
-
-    :param float angle: Total positive transition turn, rad.
-    :param float increment: Maximum characteristic turning increment, rad.
-    :param str label: Description retained for readable call sites and future diagnostics.
-    :return: Number of characteristic steps; zero for a zero-length transition.
-    :rtype: int
-    :raises GeometryError: If the requested transition turn is negative.
-    """
-
-    # ``label`` makes the four call sites self-explanatory even though the present error text is shared.
-    del label
-    if angle < -1.0e-12:
-        raise GeometryError("transition turning cannot be negative")
-    if angle <= 1.0e-12:
-        return 0
-    return int(math.ceil(angle / increment))
-
-
 @lru_cache(maxsize=20_000)
 def _r_from_nu(nu: float, gamma: float) -> float:
     """Calculate vortex radius divided by sonic radius from Prandtl--Meyer angle.
@@ -95,9 +73,7 @@ def _r_from_nu(nu: float, gamma: float) -> float:
     return 1.0 / critical_velocity_ratio(relative_flow_mach, gamma)
 
 
-def _lower_unrotated(
-    nu_uniform: float, nu_lower: float, increment: float, save_every: int, gamma: float
-) -> _Transition:
+def _lower_unrotated(nu_uniform: float, nu_lower: float, number_of_nodes: int, gamma: float) -> _Transition:
     """Construct the unrotated pressure-side transition.
 
     The transition is integrated from the constant-Mach circular arc toward uniform flow, then reversed before return
@@ -105,18 +81,18 @@ def _lower_unrotated(
 
     :param float nu_uniform: Prandtl--Meyer angle of the uniform inlet or outlet flow, rad.
     :param float nu_lower: Prandtl--Meyer angle on the constant-Mach pressure-side arc, rad.
-    :param float increment: Maximum characteristic turning step, rad.
-    :param int save_every: Number of integration steps between retained geometry stations.
+    :param int number_of_nodes: Fixed number of nodes across the nonzero MOC transition.
     :param float gamma: Frozen specific-heat ratio, -.
     :return: Unrotated pressure-side transition normalized by vortex sonic radius.
     :rtype: _Transition
     :raises GeometryError: If a characteristic becomes parallel to its wall segment.
     """
 
-    # Recalculate the actual increment so an integer number of equal steps lands exactly on the requested endpoint.
-    steps = _integer_steps(nu_uniform - nu_lower, increment, "lower transition turning")
-    local_increment = (nu_uniform - nu_lower) / steps if steps else increment
-    local_save_every = max(1, int(round(save_every * increment / local_increment)))
+    transition_turning = nu_uniform - nu_lower
+    if transition_turning < -1.0e-12:
+        raise GeometryError("transition turning cannot be negative")
+    steps = number_of_nodes - 1
+    local_increment = transition_turning / steps
     r_lower = _r_from_nu(nu_lower, gamma)
     gp = 0.5 * (gamma + 1.0)
     gm = 0.5 * (gamma - 1.0)
@@ -129,7 +105,11 @@ def _lower_unrotated(
     y_wall = r_lower
     circle_to_uniform = [(x_wall, y_wall, 1.0 / r_lower, 0.0, nu_lower)]
 
-    for iteration, k in enumerate(range(steps, 0, -1), start=1):
+    if transition_turning <= 1.0e-12:
+        data = np.asarray(circle_to_uniform, dtype=float)
+        return _Transition(x=data[:, 0], y=data[:, 1], mach_star=data[:, 2], eta=data[:, 3], nu=data[:, 4])
+
+    for k in range(steps, 0, -1):
         phi = phi_previous - local_increment
         local_nu = nu_uniform - (k - 1) * local_increment
         radius = _r_from_nu(local_nu, gamma)
@@ -148,23 +128,18 @@ def _lower_unrotated(
         y_wall = (characteristic_slope * wall_intercept - wall_slope * characteristic_intercept) / denominator
         phi_previous = phi
         mu_previous = mu
-        # Integration may use many small steps, while only approximately one station per degree is needed for geometry.
-        if iteration % local_save_every == 0 or iteration == steps:
-            circle_to_uniform.append((x_wall, y_wall, 1.0 / radius, -phi, local_nu))
+        circle_to_uniform.append((x_wall, y_wall, 1.0 / radius, -phi, local_nu))
 
     data = np.asarray(circle_to_uniform[::-1], dtype=float)
     return _Transition(x=data[:, 0], y=data[:, 1], mach_star=data[:, 2], eta=data[:, 3], nu=data[:, 4])
 
 
-def _upper_unrotated(
-    nu_uniform: float, nu_upper: float, increment: float, save_every: int, gamma: float
-) -> _Transition:
+def _upper_unrotated(nu_uniform: float, nu_upper: float, number_of_nodes: int, gamma: float) -> _Transition:
     """Construct the unrotated suction-side transition.
 
     :param float nu_uniform: Prandtl--Meyer angle of the uniform inlet or outlet flow, rad.
     :param float nu_upper: Prandtl--Meyer angle on the constant-Mach suction-side arc, rad.
-    :param float increment: Maximum characteristic turning step, rad.
-    :param int save_every: Number of integration steps between retained geometry stations.
+    :param int number_of_nodes: Fixed number of nodes across the nonzero MOC transition.
     :param float gamma: Frozen specific-heat ratio, -.
     :return: Unrotated suction-side transition normalized by vortex sonic radius.
     :rtype: _Transition
@@ -173,9 +148,11 @@ def _upper_unrotated(
 
     # The suction-side equations use the opposite characteristic family but otherwise follow the same marching logic as
     # ``_lower_unrotated``. Keeping the two translations separate makes comparison with the legacy equations easier.
-    steps = _integer_steps(nu_upper - nu_uniform, increment, "upper transition turning")
-    local_increment = (nu_upper - nu_uniform) / steps if steps else increment
-    local_save_every = max(1, int(round(save_every * increment / local_increment)))
+    transition_turning = nu_upper - nu_uniform
+    if transition_turning < -1.0e-12:
+        raise GeometryError("transition turning cannot be negative")
+    steps = number_of_nodes - 1
+    local_increment = transition_turning / steps
     r_upper = _r_from_nu(nu_upper, gamma)
     gp = 0.5 * (gamma + 1.0)
     gm = 0.5 * (gamma - 1.0)
@@ -186,7 +163,11 @@ def _upper_unrotated(
     y_wall = r_upper
     circle_to_uniform = [(x_wall, y_wall, 1.0 / r_upper, 0.0, nu_upper)]
 
-    for iteration, j in enumerate(range(steps, 0, -1), start=1):
+    if transition_turning <= 1.0e-12:
+        data = np.asarray(circle_to_uniform, dtype=float)
+        return _Transition(x=data[:, 0], y=data[:, 1], mach_star=data[:, 2], eta=data[:, 3], nu=data[:, 4])
+
+    for j in range(steps, 0, -1):
         phi = phi_previous - local_increment
         local_nu = nu_uniform + (j - 1) * local_increment
         radius = _r_from_nu(local_nu, gamma)
@@ -204,8 +185,7 @@ def _upper_unrotated(
         y_wall = (characteristic_slope * wall_intercept - wall_slope * characteristic_intercept) / denominator
         phi_previous = phi
         mu_previous = mu
-        if iteration % local_save_every == 0 or iteration == steps:
-            circle_to_uniform.append((x_wall, y_wall, 1.0 / radius, -phi, local_nu))
+        circle_to_uniform.append((x_wall, y_wall, 1.0 / radius, -phi, local_nu))
 
     data = np.asarray(circle_to_uniform[::-1], dtype=float)
     return _Transition(x=data[:, 0], y=data[:, 1], mach_star=data[:, 2], eta=data[:, 3], nu=data[:, 4])
@@ -273,19 +253,19 @@ def _rotate_upper(transition: _Transition, alpha: float, *, outlet: bool) -> _Ro
     return _RotatedTransition(x=x, y=y, mach_star=transition.mach_star.copy(), eta=transition.eta + abs(alpha))
 
 
-def _inclusive_angles(start: float, end: float, maximum_step: float) -> np.ndarray:
+def _inclusive_angles(start: float, end: float, number_of_nodes: int) -> np.ndarray:
     """Create an angle array that contains both requested endpoints.
 
     :param float start: First polar angle, rad.
     :param float end: Last polar angle, rad.
-    :param float maximum_step: Largest permitted spacing, rad.
+    :param int number_of_nodes: Fixed number of nodes across the nonzero circular arc.
     :return: Monotonic array including ``start`` and ``end`` exactly.
     :rtype: numpy.ndarray
     """
 
-    span = end - start
-    count = max(1, int(math.ceil(abs(span) / maximum_step)))
-    return np.linspace(start, end, count + 1, dtype=float)
+    if abs(end - start) <= 1.0e-12:
+        return np.asarray([start], dtype=float)
+    return np.linspace(start, end, number_of_nodes, dtype=float)
 
 
 def design_ideal_geometry(
@@ -298,7 +278,7 @@ def design_ideal_geometry(
     ideal_outlet_relative_flow_angle: float,
     inlet_metal_angle: float,
     outlet_metal_angle: float,
-    flow_turning_increment: float,
+    number_of_nodes: int,
     gamma: float,
 ) -> BladeShape:
     """Port the ``ROTORU`` and ``ROTORR`` characteristic construction.
@@ -315,7 +295,7 @@ def design_ideal_geometry(
     :param float ideal_outlet_relative_flow_angle: Negative ideal rotor-relative outlet flow angle, deg.
     :param float inlet_metal_angle: Positive inlet metal angle measured from the machine axis, deg.
     :param float outlet_metal_angle: Negative outlet metal angle measured from the machine axis, deg.
-    :param float flow_turning_increment: Maximum characteristic turning increment, deg.
+    :param int number_of_nodes: Nodes used by every nonzero MOC transition and constant-Mach circular arc.
     :param float gamma: Frozen specific-heat ratio, -.
     :return: Ideal rotor passage normalized by vortex sonic radius.
     :rtype: BladeShape
@@ -331,16 +311,14 @@ def design_ideal_geometry(
         raise GeometryError("lower_surface_relative_flow_mach must not exceed inlet or outlet Mach")
     if upper_surface_relative_flow_mach < max(real_inlet_relative_flow_mach, ideal_outlet_relative_flow_mach) - 1.0e-12:
         raise GeometryError("upper_surface_relative_flow_mach must not be below inlet or outlet Mach")
-    if not 0.0 < flow_turning_increment <= 1.0:
-        raise GeometryError("flow_turning_increment must be in (0, 1]")
+    if not isinstance(number_of_nodes, int) or isinstance(number_of_nodes, bool) or number_of_nodes < 3:
+        raise GeometryError("number_of_nodes must be an integer >= 3")
 
     nu_in, nu_out, nu_low, nu_up = (float(prandtl_meyer_angle(value, gamma)) for value in mach_values)
     beta_in = math.radians(real_inlet_relative_flow_angle)
     beta_out = math.radians(ideal_outlet_relative_flow_angle)
     inlet_metal_angle_rad = math.radians(inlet_metal_angle)
     outlet_metal_angle_rad = math.radians(outlet_metal_angle)
-    increment = math.radians(flow_turning_increment)
-    save_every = max(1, int(round(1.0 / flow_turning_increment)))
 
     # These four rotations place the generic lower and upper transition solutions at the specified inlet and outlet
     # directions. Their signs also determine whether the requested surface-Mach levels can be joined physically.
@@ -357,14 +335,16 @@ def design_ideal_geometry(
     # Build separate inlet and outlet transitions for both blade surfaces. This repetition mirrors ROTORU/ROTORR and
     # keeps the relationship between each NASA TN D-4421 equation and its Python counterpart visible.
     lower_in = _rotate_lower(
-        _lower_unrotated(nu_in, nu_low, increment, save_every, gamma), alpha_lower_in, outlet=False
+        _lower_unrotated(nu_in, nu_low, number_of_nodes, gamma), alpha_lower_in, outlet=False
     )
     lower_out = _rotate_lower(
-        _lower_unrotated(nu_out, nu_low, increment, save_every, gamma), alpha_lower_out, outlet=True
+        _lower_unrotated(nu_out, nu_low, number_of_nodes, gamma), alpha_lower_out, outlet=True
     )
-    upper_in = _rotate_upper(_upper_unrotated(nu_in, nu_up, increment, save_every, gamma), alpha_upper_in, outlet=False)
+    upper_in = _rotate_upper(
+        _upper_unrotated(nu_in, nu_up, number_of_nodes, gamma), alpha_upper_in, outlet=False
+    )
     upper_out = _rotate_upper(
-        _upper_unrotated(nu_out, nu_up, increment, save_every, gamma), alpha_upper_out, outlet=True
+        _upper_unrotated(nu_out, nu_up, number_of_nodes, gamma), alpha_upper_out, outlet=True
     )
 
     # Project between the two non-aligned transition endpoints along the uniform inlet/outlet flow directions. These are
@@ -378,14 +358,11 @@ def design_ideal_geometry(
     if inlet_pitch <= 0.0 or outlet_pitch <= 0.0:
         raise GeometryError("computed blade pitch is not positive")
 
-    # Join the four transition arcs with their constant-Mach vortex circles.
-    # Five-degree geometry stations are sufficient because the BL integration
-    # later inserts points without smoothing these analytic arcs.
+    # Join the four transition arcs with fixed-node constant-Mach vortex circles.
     r_low = 1.0 / critical_velocity_ratio(lower_surface_relative_flow_mach, gamma)
     r_up = 1.0 / critical_velocity_ratio(upper_surface_relative_flow_mach, gamma)
-    circle_step = math.radians(5.0)
-    lower_angles = _inclusive_angles(alpha_lower_in, alpha_lower_out, circle_step)
-    upper_angles = _inclusive_angles(alpha_upper_in, alpha_upper_out, circle_step)
+    lower_angles = _inclusive_angles(alpha_lower_in, alpha_lower_out, number_of_nodes)
+    upper_angles = _inclusive_angles(alpha_upper_in, alpha_upper_out, number_of_nodes)
     low_circle_x = r_low * np.sin(lower_angles)
     low_circle_y = r_low * np.cos(lower_angles)
     up_circle_x = r_up * np.sin(upper_angles)
@@ -469,11 +446,22 @@ def design_ideal_geometry(
             metal_angle=np.asarray(np.degrees(eta[keep]), dtype=float),
         )
 
+    turning_spans = (
+        nu_in - nu_low,
+        nu_out - nu_low,
+        nu_up - nu_in,
+        nu_up - nu_out,
+        abs(alpha_lower_out - alpha_lower_in),
+        abs(alpha_upper_out - alpha_upper_in),
+    )
+    max_flow_turning_increment = math.degrees(max(turning_spans) / (number_of_nodes - 1))
+
     return BladeShape(
-        pressure=make_surface(pressure_x, pressure_y, pressure_ms, pressure_eta),
-        suction=make_surface(suction_x, suction_y, suction_ms, suction_eta),
+        pressure_surface=make_surface(pressure_x, pressure_y, pressure_ms, pressure_eta),
+        suction_surface=make_surface(suction_x, suction_y, suction_ms, suction_eta),
         chord=chord,
         inlet_pitch=float(inlet_pitch),
         outlet_pitch=float(outlet_pitch),
+        max_flow_turning_increment=max_flow_turning_increment,
         coordinate_scale="vortex sonic radius r*",
     )

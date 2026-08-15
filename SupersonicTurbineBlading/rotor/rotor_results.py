@@ -43,19 +43,21 @@ class BladeShape:
     ``inlet_pitch`` and ``outlet_pitch`` are open passage widths; they do not
     include leading- or trailing-edge blade metal thickness.
 
-    :ivar pressure: Pressure-side surface forming the upper boundary of the stored passage.
-    :ivar suction: Suction-side surface forming the lower boundary of the stored passage.
+    :ivar pressure_surface: Pressure-side surface forming the upper boundary of the stored passage.
+    :ivar suction_surface: Suction-side surface forming the lower boundary of the stored passage.
     :ivar float chord: Axial blade chord in the active length scale.
     :ivar float inlet_pitch: Open inlet passage width in the active length scale.
     :ivar float outlet_pitch: Open outlet passage width in the active length scale.
+    :ivar float max_flow_turning_increment: Largest flow-turning increment between adjacent MOC nodes, deg.
     :ivar str coordinate_scale: Human-readable description of the active length scale.
     """
 
-    pressure: SurfaceCoordinates
-    suction: SurfaceCoordinates
+    pressure_surface: SurfaceCoordinates
+    suction_surface: SurfaceCoordinates
     chord: float
     inlet_pitch: float
     outlet_pitch: float
+    max_flow_turning_increment: float
     coordinate_scale: str
 
     @property
@@ -88,11 +90,12 @@ class BladeShape:
         """
 
         return BladeShape(
-            pressure=self.pressure.scaled(factor),
-            suction=self.suction.scaled(factor),
+            pressure_surface=self.pressure_surface.scaled(factor),
+            suction_surface=self.suction_surface.scaled(factor),
             chord=self.chord * factor,
             inlet_pitch=self.inlet_pitch * factor,
             outlet_pitch=self.outlet_pitch * factor,
+            max_flow_turning_increment=self.max_flow_turning_increment,
             coordinate_scale=scale_name,
         )
 
