@@ -25,14 +25,24 @@ def densify_surface(surface: SurfaceCoordinates, minimum_number_of_stations: int
 
     if not isinstance(minimum_number_of_stations, int) or minimum_number_of_stations < 3:
         raise ValueError("minimum_number_of_stations must be an integer >= 3")
+    source_flow_mach = surface.flow_mach_values()
     source_count = len(surface.x)
     if minimum_number_of_stations <= source_count:
         # Return independent arrays so later BL processing cannot accidentally modify the stored MOC geometry.
         return SurfaceCoordinates(
             x=np.asarray(surface.x, dtype=float).copy(),
             y=np.asarray(surface.y, dtype=float).copy(),
-            mach=np.asarray(surface.mach, dtype=float).copy(),
-            tangent_angle_rad=np.asarray(surface.tangent_angle_rad, dtype=float).copy(),
+            metal_angle=np.asarray(surface.metal_angle, dtype=float).copy(),
+            absolute_flow_mach=(
+                None
+                if surface.absolute_flow_mach is None
+                else np.asarray(source_flow_mach, dtype=float).copy()
+            ),
+            relative_flow_mach=(
+                None
+                if surface.relative_flow_mach is None
+                else np.asarray(source_flow_mach, dtype=float).copy()
+            ),
         )
 
     segment_length = np.hypot(np.diff(surface.x), np.diff(surface.y))
@@ -54,22 +64,33 @@ def densify_surface(surface: SurfaceCoordinates, minimum_number_of_stations: int
     # first point of the next segment; the final endpoint is appended once after the loop.
     x_values: list[float] = []
     y_values: list[float] = []
-    mach_values: list[float] = []
+    flow_mach_values: list[float] = []
     for index, interval_count in enumerate(intervals_per_segment):
         fractions = np.arange(interval_count, dtype=float) / interval_count
         x_values.extend(surface.x[index] + fractions * (surface.x[index + 1] - surface.x[index]))
         y_values.extend(surface.y[index] + fractions * (surface.y[index + 1] - surface.y[index]))
-        mach_values.extend(surface.mach[index] + fractions * (surface.mach[index + 1] - surface.mach[index]))
+        flow_mach_values.extend(
+            source_flow_mach[index]
+            + fractions * (source_flow_mach[index + 1] - source_flow_mach[index])
+        )
     x_values.append(float(surface.x[-1]))
     y_values.append(float(surface.y[-1]))
-    mach_values.append(float(surface.mach[-1]))
+    flow_mach_values.append(float(source_flow_mach[-1]))
 
     x = np.asarray(x_values, dtype=float)
     y = np.asarray(y_values, dtype=float)
-    mach = np.asarray(mach_values, dtype=float)
+    interpolated_flow_mach = np.asarray(flow_mach_values, dtype=float)
     # Recalculate tangent direction from the denser coordinates. Interpolating angles directly can fail at angle wraps.
     return SurfaceCoordinates(
-        x=x, y=y, mach=mach, tangent_angle_rad=np.asarray(np.arctan2(np.gradient(y), np.gradient(x)), dtype=float)
+        x=x,
+        y=y,
+        metal_angle=np.asarray(np.degrees(np.arctan2(np.gradient(y), np.gradient(x))), dtype=float),
+        absolute_flow_mach=(
+            interpolated_flow_mach if surface.absolute_flow_mach is not None else None
+        ),
+        relative_flow_mach=(
+            interpolated_flow_mach if surface.relative_flow_mach is not None else None
+        ),
     )
 
 
@@ -98,11 +119,20 @@ def resample_surface(surface: SurfaceCoordinates, number_of_stations: int) -> Su
     target_arc = np.linspace(0.0, float(source_arc[-1]), number_of_stations, dtype=float)
     x = np.interp(target_arc, source_arc, surface.x)
     y = np.interp(target_arc, source_arc, surface.y)
-    mach = np.interp(target_arc, source_arc, surface.mach)
-    tangent = np.arctan2(np.gradient(y), np.gradient(x))
+    interpolated_flow_mach = np.interp(target_arc, source_arc, surface.flow_mach_values())
+    metal_angle = np.degrees(np.arctan2(np.gradient(y), np.gradient(x)))
     return SurfaceCoordinates(
         x=np.asarray(x, dtype=float),
         y=np.asarray(y, dtype=float),
-        mach=np.asarray(mach, dtype=float),
-        tangent_angle_rad=np.asarray(tangent, dtype=float),
+        metal_angle=np.asarray(metal_angle, dtype=float),
+        absolute_flow_mach=(
+            np.asarray(interpolated_flow_mach, dtype=float)
+            if surface.absolute_flow_mach is not None
+            else None
+        ),
+        relative_flow_mach=(
+            np.asarray(interpolated_flow_mach, dtype=float)
+            if surface.relative_flow_mach is not None
+            else None
+        ),
     )

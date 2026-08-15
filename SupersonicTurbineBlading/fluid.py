@@ -1,9 +1,8 @@
 """Shared ideal-gas mixture properties assembled from pure-fluid CoolProp calls.
 
 CoolProp can evaluate many mixtures directly.  This package deliberately
-does not use that interface, because some component pairs do not have binary
-interaction data and a failed mixture flash would make otherwise simple
-preliminary designs impossible.  Instead, every component is evaluated as a
+does not use that interface, because a failed mixture flash would make otherwise simple
+preliminary designs impossible. Instead, every component is evaluated as a
 pure gas and the explicitly documented mixing rules below are applied.
 """
 
@@ -23,7 +22,8 @@ class FluidPropertyError(RuntimeError):
 
 @dataclass(frozen=True)
 class FluidState:
-    """Properties of an ideal-gas mixture at one temperature and pressure.
+    """Properties of an ideal-gas mixture represented by FluidState at a specific temperature and pressure are recalled
+     below.
 
     All values use SI units, irrespective of the eventual units used to
     dimensionalize the blade coordinates.
@@ -66,9 +66,7 @@ class Fluid:
     """Represent an ideal-gas mixture built from CoolProp pure fluids.
 
     The composition is fixed at initialization.  State-dependent properties
-    are obtained later with :meth:`properties`, because temperature and
-    pressure belong to the turbomachinery operating point rather than to the
-    chemical composition.
+    are obtained later with :meth:`properties`.
 
     The class is intended for gases.  A component that CoolProp identifies as
     liquid or two-phase at its Dalton partial pressure is rejected instead of

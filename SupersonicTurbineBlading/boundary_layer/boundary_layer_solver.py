@@ -100,13 +100,22 @@ def project_boundary_layer_result(
         s_over_chord=np.asarray(target_s, dtype=float),
         # Retain the exact MOC Mach values rather than an interpolation of
         # the temporary dense surface representation.
-        mach=np.asarray(target_surface.mach, dtype=float).copy(),
         displacement_thickness_over_chord=interpolate(result.displacement_thickness_over_chord),
         momentum_thickness_over_chord=interpolate(result.momentum_thickness_over_chord),
         form_factor=interpolate(result.form_factor),
         regime=regime,
         transition_index=transition_index,
         separation_index=separation_index,
+        freestream_absolute_flow_mach=(
+            np.asarray(target_surface.absolute_flow_mach, dtype=float).copy()
+            if target_surface.absolute_flow_mach is not None
+            else None
+        ),
+        freestream_relative_flow_mach=(
+            np.asarray(target_surface.relative_flow_mach, dtype=float).copy()
+            if target_surface.relative_flow_mach is not None
+            else None
+        ),
     )
 
 
@@ -193,7 +202,7 @@ def _simpson_panel(function, lower: float, upper: float) -> float:
 def _surface_state(
     surface: SurfaceCoordinates,
     chord: float,
-    inlet_mach: float,
+    inlet_edge_flow_mach: float,
     chord_reynolds_number: float,
     gamma: float,
     fluid: Fluid,
@@ -209,7 +218,7 @@ def _surface_state(
 
     :param SurfaceCoordinates surface: Ideal surface, march start to exit.
     :param float chord: Nondimensional reference chord.
-    :param float inlet_mach: Mach number at the first surface station.
+    :param float inlet_edge_flow_mach: Mach number at the first surface station.
     :param float chord_reynolds_number: Inlet-edge chord Reynolds number.
     :param float gamma: Frozen ratio of specific heats.
     :param Fluid fluid: Ideal-gas mixture property object.
@@ -231,22 +240,22 @@ def _surface_state(
     if arcl <= 0.0 or np.any(ds <= 0.0):
         raise BoundaryLayerError("surface coordinates must advance without duplicates")
     sol = s / arcl
-    mach = np.asarray(surface.mach, dtype=float)
+    edge_flow_mach = np.asarray(surface.flow_mach_values(), dtype=float)
 
     # The FORTRAN boundary-layer equations use total temperature and total
     # sonic speed as their reference state.  Static edge temperature and
     # pressure follow the constant-gamma isentropic relations.
     gm = gamma - 1.0
     gp = gamma + 1.0
-    temperature = 1.0 / (1.0 + 0.5 * gm * mach**2)
+    temperature = 1.0 / (1.0 + 0.5 * gm * edge_flow_mach**2)
     edge_temperature = inlet_total_temperature * temperature
     edge_pressure = inlet_total_pressure * temperature ** (gamma / gm)
 
     # Velocity remains normalized by the total-state sonic speed.  Therefore
     # U/a_t = M*sqrt(T/Tt), exactly as in the original nondimensional code.
-    velocity = mach * np.sqrt(temperature)
-    inlet_temperature_factor = 1.0 + 0.5 * gm * inlet_mach**2
-    inlet_velocity = inlet_mach / math.sqrt(inlet_temperature_factor)
+    velocity = edge_flow_mach * np.sqrt(temperature)
+    inlet_temperature_factor = 1.0 + 0.5 * gm * inlet_edge_flow_mach**2
+    inlet_velocity = inlet_edge_flow_mach / math.sqrt(inlet_temperature_factor)
     inlet_static_temperature = inlet_total_temperature / inlet_temperature_factor
     inlet_static_pressure = inlet_total_pressure / inlet_temperature_factor ** (gamma / gm)
 
@@ -274,7 +283,7 @@ def _surface_state(
 
     # SW is the transformed wall-temperature parameter appearing in the
     # legacy correlations. It is zero for the NASA TM X-2434 and NASA TM X-2343 choice Twall=Tt.
-    wall_temperature_ratio = np.zeros_like(mach)
+    wall_temperature_ratio = np.zeros_like(edge_flow_mach)
     recovery_temperature = temperature * (1.0 + prandtl_number ** (1.0 / 3.0) * (1.0 / temperature - 1.0))
 
     # The empirical turbulent transformation evaluates viscosity at a
@@ -293,11 +302,11 @@ def _surface_state(
     # factors. Their short keys are retained in the private state dictionary
     # so the subsequent laminar and turbulent equations can be checked term by
     # term against the FORTRAN; descriptive physical quantities use full names.
-    bb = mach / total_kinematic_viscosity * temperature ** (gp / (2.0 * gm))
+    bb = edge_flow_mach / total_kinematic_viscosity * temperature ** (gp / (2.0 * gm))
     aa = bb * temperature / mean_temperature * (mean_dynamic_viscosity / total_state.dynamic_viscosity) ** 0.268
-    ff = 1.0 + 0.1599 * mach**2 + 0.0114 * mach**4
+    ff = 1.0 + 0.1599 * edge_flow_mach**2 + 0.0114 * edge_flow_mach**4
     duds = np.gradient(velocity, s, edge_order=1)
-    dmds = np.gradient(mach, s, edge_order=1)
+    dmds = np.gradient(edge_flow_mach, s, edge_order=1)
     dmdl = arcl * dmds
 
     return {
@@ -306,7 +315,7 @@ def _surface_state(
         "s": s,
         "sol": sol,
         "arcl": arcl,
-        "mach": mach,
+        "edge_flow_mach": edge_flow_mach,
         "temperature": temperature,
         "velocity": velocity,
         "nu": local_kinematic_viscosity,
@@ -336,7 +345,7 @@ def _laminar_solution(state: dict[str, np.ndarray | float], correlation_limit: f
 
     s = state["s"]
     sol = state["sol"]
-    mach = state["mach"]
+    edge_flow_mach = state["edge_flow_mach"]
     arcl = float(state["arcl"])
     gamma = float(state["gamma"])
     pr = float(state["pr"])
@@ -400,14 +409,14 @@ def _laminar_solution(state: dict[str, np.ndarray | float], correlation_limit: f
     table_s = [0.0]
     corln_table = [0.0]
     corml_table = [0.0]
-    previous_temperature_factor = 1.0 + 0.5 * gm * float(mach[0]) ** 2
+    previous_temperature_factor = 1.0 + 0.5 * gm * float(edge_flow_mach[0]) ** 2
     exponent = (3.0 * gamma - 1.0) / (2.0 * gm)
     current_s = 0.0
     while current_s < arcl - 1.0e-14:
         next_s = min(current_s + step, arcl)
         wall_ratio = _interp_extrap(s, sw, current_s)
-        mach_here = _interp_extrap(s, mach, current_s)
-        mach_next = _interp_extrap(s, mach, next_s)
+        edge_flow_mach_here = _interp_extrap(s, edge_flow_mach, current_s)
+        edge_flow_mach_next = _interp_extrap(s, edge_flow_mach, next_s)
         gradient_next = _interp_extrap(s, dmdl, next_s)
         corln = corln_table[-1]
         a1 = 0.43631 - 0.00367 * wall_ratio + 0.00481 * wall_ratio**2 + 0.00651 * wall_ratio**3
@@ -428,16 +437,18 @@ def _laminar_solution(state: dict[str, np.ndarray | float], correlation_limit: f
             :rtype: float
             """
 
-            local_mach = _interp_extrap(sol, mach, normalized_s)
-            return local_mach ** (coefficient_b - 1.0) / (1.0 + 0.5 * gm * local_mach**2) ** exponent
+            local_edge_flow_mach = _interp_extrap(sol, edge_flow_mach, normalized_s)
+            return local_edge_flow_mach ** (coefficient_b - 1.0) / (
+                1.0 + 0.5 * gm * local_edge_flow_mach**2
+            ) ** exponent
 
         integral = _simpson_panel(integrand, current_s / arcl, next_s / arcl)
-        next_temperature_factor = 1.0 + 0.5 * gm * mach_next**2
-        next_scale = mach_next ** (-coefficient_b) * next_temperature_factor**exponent
+        next_temperature_factor = 1.0 + 0.5 * gm * edge_flow_mach_next**2
+        next_scale = edge_flow_mach_next ** (-coefficient_b) * next_temperature_factor**exponent
         source = -coefficient_a * next_scale * integral
         convection = 0.0
         if len(table_s) > 1:
-            previous_scale = mach_here ** (-coefficient_b) * previous_temperature_factor**exponent
+            previous_scale = edge_flow_mach_here ** (-coefficient_b) * previous_temperature_factor**exponent
             convection = next_scale / previous_scale * corml_table[-1]
         corml_next = source + convection
         corln_next = corml_next * gradient_next
@@ -464,7 +475,7 @@ def _laminar_solution(state: dict[str, np.ndarray | float], correlation_limit: f
         )
     corln = np.array([_interp_extrap(table_s_array, np.asarray(corln_table), value) for value in s])
     corml = np.array([_interp_extrap(table_s_array, np.asarray(corml_table), value) for value in s])
-    temperature_factor = 1.0 + 0.5 * gm * mach**2
+    temperature_factor = 1.0 + 0.5 * gm * edge_flow_mach**2
     theta_argument = -corml * nu_total * arcl * temperature_factor ** ((3.0 - gamma) / (2.0 * gm))
     theta = np.sqrt(np.maximum(theta_argument, 0.0))
     form = (-1.1138 * corln + 2.38411) * (1.0 + (2.79 - 1.78 * math.sqrt(pr)) * (temperature_factor - 1.0)) + (
@@ -480,15 +491,15 @@ def _laminar_solution(state: dict[str, np.ndarray | float], correlation_limit: f
     re_theta = np.divide(velocity * theta, local_nu, out=np.zeros_like(theta), where=local_nu > 0.0)
     shape_l = delta**2 / local_nu * duds
     shape_k = np.zeros_like(theta)
-    nonzero_mach = mach > 1.0e-10
-    shape_k[nonzero_mach] = (
+    nonzero_edge_flow_mach = edge_flow_mach > 1.0e-10
+    shape_k[nonzero_edge_flow_mach] = (
         nu_total
-        * re_theta[nonzero_mach] ** 2
-        / ff[nonzero_mach]
+        * re_theta[nonzero_edge_flow_mach] ** 2
+        / ff[nonzero_edge_flow_mach]
         / arcl
-        * dmdl[nonzero_mach]
-        * temperature_factor[nonzero_mach] ** (1.0 / gm)
-        / mach[nonzero_mach] ** 2
+        * dmdl[nonzero_edge_flow_mach]
+        * temperature_factor[nonzero_edge_flow_mach] ** (1.0 / gm)
+        / edge_flow_mach[nonzero_edge_flow_mach] ** 2
     )
     re_theta_i = re_theta / ff / np.sqrt(temperature_factor)
 
@@ -556,7 +567,7 @@ def _turbulent_solution(
     """
 
     s = state["s"]
-    mach = state["mach"]
+    edge_flow_mach = state["edge_flow_mach"]
     sw = state["sw"]
     aa = state["aa"]
     bb = state["bb"]
@@ -573,7 +584,7 @@ def _turbulent_solution(
     gp = gamma + 1.0
 
     theta_transformed = initial_theta * temperature[start_index] ** (gp / (2.0 * gm))
-    f_initial = max(mach[start_index] * theta_transformed / nu_total, 1.0e-15) ** 1.268
+    f_initial = max(edge_flow_mach[start_index] * theta_transformed / nu_total, 1.0e-15) ** 1.268
     state_vector = np.array([f_initial, max(initial_incompressible_form, 1.021)], dtype=float)
     table_s = [float(s[start_index])]
     table_f = [float(state_vector[0])]
@@ -590,7 +601,7 @@ def _turbulent_solution(
         :rtype: numpy.ndarray
         """
 
-        local_mach = _interp_extrap(s, mach, location)
+        local_edge_flow_mach = _interp_extrap(s, edge_flow_mach, location)
         local_sw = _interp_extrap(s, sw, location)
         local_aa = _interp_extrap(s, aa, location)
         local_bb = _interp_extrap(s, bb, location)
@@ -600,7 +611,7 @@ def _turbulent_solution(
         h_value = max(float(values[1]), 1.001)
         temp1 = 1.0 + (1.0 + local_sw) * h_value
         skin_source = 0.123 * math.exp(-1.561 * h_value) * local_aa
-        df = 1.268 * (-f_value / local_mach * local_gradient * temp1 + skin_source)
+        df = 1.268 * (-f_value / local_edge_flow_mach * local_gradient * temp1 + skin_source)
         temp3 = h_value * (h_value + 1.0) ** 2 * (h_value - 1.0)
         temp4 = 1.0 + local_sw * (h_value**2 + 4.0 * h_value - 1.0) / ((h_value + 1.0) * (h_value + 3.0))
         temp5 = (h_value**2 - 1.0) * h_value / f_value * skin_source
@@ -610,7 +621,7 @@ def _turbulent_solution(
             * (0.011 * (h_value + 1.0) * (h_value - 1.0) ** 2 / h_value**2 / local_tbar)
             * local_bb
         )
-        dh = -local_gradient * 0.5 / local_mach * temp3 * temp4 + temp5 - temp6
+        dh = -local_gradient * 0.5 / local_edge_flow_mach * temp3 * temp4 + temp5 - temp6
         return np.array([df, dh], dtype=float)
 
     # Use classical fourth-order Runge--Kutta with the fixed 0.002*surface-length step in NASA TM X-2434 and
@@ -646,7 +657,7 @@ def _turbulent_solution(
             break
         f_value = _interp_extrap(table_s_array, table_f_array, float(s[index]))
         h_incompressible = _interp_extrap(table_s_array, table_h_array, float(s[index]))
-        theta_transformed = nu_total * max(f_value, 1.0e-15) ** 0.7886 / (mach[index])
+        theta_transformed = nu_total * max(f_value, 1.0e-15) ** 0.7886 / edge_flow_mach[index]
         theta[index] = theta_transformed * temperature[index] ** (-gp / (2.0 * gm))
         temperature_factor = 1.0 / temperature[index]
         form[index] = h_incompressible * temperature_factor + pr ** (1.0 / 3.0) * (temperature_factor - 1.0)
@@ -670,7 +681,7 @@ def solve_boundary_layer(
     *,
     surface: SurfaceCoordinates,
     chord: float,
-    inlet_mach: float,
+    inlet_edge_flow_mach: float,
     chord_reynolds_number: float,
     gamma: float,
     fluid: Fluid,
@@ -685,7 +696,7 @@ def solve_boundary_layer(
 
     :param SurfaceCoordinates surface: Ideal surface coordinates and Mach.
     :param float chord: Nondimensional blade chord.
-    :param float inlet_mach: Mach number at the first surface station.
+    :param float inlet_edge_flow_mach: Mach number at the first surface station.
     :param float chord_reynolds_number: Inlet-edge chord Reynolds number.
     :param float gamma: Frozen ratio of specific heats.
     :param Fluid fluid: CoolProp-backed ideal-gas mixture.
@@ -713,10 +724,10 @@ def solve_boundary_layer(
         raise ValueError("laminar_correlation_limit must be positive and finite")
     # Both solution branches use the same thermodynamic reconstruction and nondimensional surface coordinate.
     state = _surface_state(
-        surface, chord, inlet_mach, chord_reynolds_number, gamma, fluid, inlet_total_temperature, inlet_total_pressure
+        surface, chord, inlet_edge_flow_mach, chord_reynolds_number, gamma, fluid, inlet_total_temperature, inlet_total_pressure
     )
     s = np.asarray(state["s"])
-    mach = np.asarray(state["mach"])
+    edge_flow_mach = np.asarray(state["edge_flow_mach"])
     count = len(s)
     regime = np.full(count, "laminar", dtype="<U12")
     transition_index = None
@@ -747,7 +758,7 @@ def solve_boundary_layer(
         #
         # SW=0 because the wall temperature equals relative total
         # temperature in the NASA TM X-2434 and NASA TM X-2343 drivers.
-        temperature_factor = 1.0 + 0.5 * (gamma - 1.0) * mach[0] ** 2
+        temperature_factor = 1.0 + 0.5 * (gamma - 1.0) * edge_flow_mach[0] ** 2
         compressible_form = initial_displacement / initial_theta
         initial_incompressible_form = (
             compressible_form - float(state["pr"]) ** (1.0 / 3.0) * (temperature_factor - 1.0)
@@ -777,7 +788,7 @@ def solve_boundary_layer(
             # NASA TM X-2434 and NASA TM X-2343 recommend CTHET=1: transition at natural
             # onset or imminent laminar separation, conserving theta.
             initial_theta = max(float(theta[transition_index]), 1.0e-12)
-            temperature_factor = 1.0 + 0.5 * (gamma - 1.0) * mach[transition_index] ** 2
+            temperature_factor = 1.0 + 0.5 * (gamma - 1.0) * edge_flow_mach[transition_index] ** 2
             incompressible_form = (
                 form[transition_index] - float(state["pr"]) ** (1.0 / 3.0) * (temperature_factor - 1.0)
             ) / temperature_factor
@@ -807,11 +818,16 @@ def solve_boundary_layer(
 
     return BoundaryLayerResult(
         s_over_chord=np.asarray(s, dtype=float),
-        mach=np.asarray(mach, dtype=float),
         displacement_thickness_over_chord=np.asarray(displacement, dtype=float),
         momentum_thickness_over_chord=np.asarray(theta, dtype=float),
         form_factor=np.asarray(form, dtype=float),
         regime=regime,
         transition_index=transition_index,
         separation_index=separation_index,
+        freestream_absolute_flow_mach=(
+            np.asarray(edge_flow_mach, dtype=float) if surface.absolute_flow_mach is not None else None
+        ),
+        freestream_relative_flow_mach=(
+            np.asarray(edge_flow_mach, dtype=float) if surface.relative_flow_mach is not None else None
+        ),
     )

@@ -91,8 +91,8 @@ def _r_from_nu(nu: float, gamma: float) -> float:
     :rtype: float
     """
 
-    mach = mach_from_prandtl_meyer(max(0.0, nu), gamma)
-    return 1.0 / critical_velocity_ratio(mach, gamma)
+    relative_flow_mach = mach_from_prandtl_meyer(max(0.0, nu), gamma)
+    return 1.0 / critical_velocity_ratio(relative_flow_mach, gamma)
 
 
 def _lower_unrotated(
@@ -290,13 +290,15 @@ def _inclusive_angles(start: float, end: float, maximum_step: float) -> np.ndarr
 
 def design_ideal_geometry(
     *,
-    inlet_mach: float,
-    outlet_mach: float,
-    lower_surface_mach: float,
-    upper_surface_mach: float,
-    inlet_flow_angle_deg: float,
-    outlet_blade_angle_deg: float,
-    turning_increment_deg: float,
+    real_inlet_relative_flow_mach: float,
+    ideal_outlet_relative_flow_mach: float,
+    lower_surface_relative_flow_mach: float,
+    upper_surface_relative_flow_mach: float,
+    real_inlet_relative_flow_angle: float,
+    ideal_outlet_relative_flow_angle: float,
+    inlet_metal_angle: float,
+    outlet_metal_angle: float,
+    flow_turning_increment: float,
     gamma: float,
 ) -> BladeShape:
     """Port the ``ROTORU`` and ``ROTORR`` characteristic construction.
@@ -305,13 +307,15 @@ def design_ideal_geometry(
     Only the blade-frame surfaces are retained; the legacy alternate
     transition-coordinate arrays are discarded.
 
-    :param float inlet_mach: Uniform rotor-relative passage-entry Mach number, -.
-    :param float outlet_mach: Uniform rotor-relative ideal outlet Mach number, -.
-    :param float lower_surface_mach: Constant pressure-side arc Mach number, -.
-    :param float upper_surface_mach: Constant suction-side arc Mach number, -.
-    :param float inlet_flow_angle_deg: Positive rotor-relative passage-entry angle measured from the axis, deg.
-    :param float outlet_blade_angle_deg: Negative relative outlet metal/flow angle measured from the axis, deg.
-    :param float turning_increment_deg: Maximum characteristic turning increment, deg.
+    :param float real_inlet_relative_flow_mach: Uniform rotor-relative passage-entry Mach number, -.
+    :param float ideal_outlet_relative_flow_mach: Uniform rotor-relative ideal outlet Mach number, -.
+    :param float lower_surface_relative_flow_mach: Constant pressure-side arc Mach number, -.
+    :param float upper_surface_relative_flow_mach: Constant suction-side arc Mach number, -.
+    :param float real_inlet_relative_flow_angle: Positive rotor-relative passage-entry angle measured from the axis, deg.
+    :param float ideal_outlet_relative_flow_angle: Negative ideal rotor-relative outlet flow angle, deg.
+    :param float inlet_metal_angle: Positive inlet metal angle measured from the machine axis, deg.
+    :param float outlet_metal_angle: Negative outlet metal angle measured from the machine axis, deg.
+    :param float flow_turning_increment: Maximum characteristic turning increment, deg.
     :param float gamma: Frozen specific-heat ratio, -.
     :return: Ideal rotor passage normalized by vortex sonic radius.
     :rtype: BladeShape
@@ -320,21 +324,23 @@ def design_ideal_geometry(
 
     # Convert all four ordinary Mach numbers to the Prandtl--Meyer variables
     # used by the legacy characteristic equations.
-    mach_values = (inlet_mach, outlet_mach, lower_surface_mach, upper_surface_mach)
+    mach_values = (real_inlet_relative_flow_mach, ideal_outlet_relative_flow_mach, lower_surface_relative_flow_mach, upper_surface_relative_flow_mach)
     if any(value < 1.0 for value in mach_values):
         raise GeometryError("all design Mach numbers must be supersonic (>= 1)")
-    if lower_surface_mach > min(inlet_mach, outlet_mach) + 1.0e-12:
-        raise GeometryError("lower_surface_mach must not exceed inlet or outlet Mach")
-    if upper_surface_mach < max(inlet_mach, outlet_mach) - 1.0e-12:
-        raise GeometryError("upper_surface_mach must not be below inlet or outlet Mach")
-    if not 0.0 < turning_increment_deg <= 1.0:
-        raise GeometryError("turning_increment_deg must be in (0, 1]")
+    if lower_surface_relative_flow_mach > min(real_inlet_relative_flow_mach, ideal_outlet_relative_flow_mach) + 1.0e-12:
+        raise GeometryError("lower_surface_relative_flow_mach must not exceed inlet or outlet Mach")
+    if upper_surface_relative_flow_mach < max(real_inlet_relative_flow_mach, ideal_outlet_relative_flow_mach) - 1.0e-12:
+        raise GeometryError("upper_surface_relative_flow_mach must not be below inlet or outlet Mach")
+    if not 0.0 < flow_turning_increment <= 1.0:
+        raise GeometryError("flow_turning_increment must be in (0, 1]")
 
     nu_in, nu_out, nu_low, nu_up = (float(prandtl_meyer_angle(value, gamma)) for value in mach_values)
-    beta_in = math.radians(inlet_flow_angle_deg)
-    beta_out = math.radians(outlet_blade_angle_deg)
-    increment = math.radians(turning_increment_deg)
-    save_every = max(1, int(round(1.0 / turning_increment_deg)))
+    beta_in = math.radians(real_inlet_relative_flow_angle)
+    beta_out = math.radians(ideal_outlet_relative_flow_angle)
+    inlet_metal_angle_rad = math.radians(inlet_metal_angle)
+    outlet_metal_angle_rad = math.radians(outlet_metal_angle)
+    increment = math.radians(flow_turning_increment)
+    save_every = max(1, int(round(1.0 / flow_turning_increment)))
 
     # These four rotations place the generic lower and upper transition solutions at the specified inlet and outlet
     # directions. Their signs also determine whether the requested surface-Mach levels can be joined physically.
@@ -363,16 +369,20 @@ def design_ideal_geometry(
 
     # Project between the two non-aligned transition endpoints along the uniform inlet/outlet flow directions. These are
     # open passage widths; finite leading- and trailing-edge metal is added later by ``SupersonicRotorBlade``.
-    inlet_pitch = lower_in.y[0] - (upper_in.y[0] + math.tan(beta_in) * (lower_in.x[0] - upper_in.x[0]))
-    outlet_pitch = lower_out.y[0] - (upper_out.y[0] + math.tan(beta_out) * (lower_out.x[0] - upper_out.x[0]))
+    inlet_pitch = lower_in.y[0] - (
+        upper_in.y[0] + math.tan(inlet_metal_angle_rad) * (lower_in.x[0] - upper_in.x[0])
+    )
+    outlet_pitch = lower_out.y[0] - (
+        upper_out.y[0] + math.tan(outlet_metal_angle_rad) * (lower_out.x[0] - upper_out.x[0])
+    )
     if inlet_pitch <= 0.0 or outlet_pitch <= 0.0:
         raise GeometryError("computed blade pitch is not positive")
 
     # Join the four transition arcs with their constant-Mach vortex circles.
     # Five-degree geometry stations are sufficient because the BL integration
     # later inserts points without smoothing these analytic arcs.
-    r_low = 1.0 / critical_velocity_ratio(lower_surface_mach, gamma)
-    r_up = 1.0 / critical_velocity_ratio(upper_surface_mach, gamma)
+    r_low = 1.0 / critical_velocity_ratio(lower_surface_relative_flow_mach, gamma)
+    r_up = 1.0 / critical_velocity_ratio(upper_surface_relative_flow_mach, gamma)
     circle_step = math.radians(5.0)
     lower_angles = _inclusive_angles(alpha_lower_in, alpha_lower_out, circle_step)
     upper_angles = _inclusive_angles(alpha_upper_in, alpha_upper_out, circle_step)
@@ -380,8 +390,8 @@ def design_ideal_geometry(
     low_circle_y = r_low * np.cos(lower_angles)
     up_circle_x = r_up * np.sin(upper_angles)
     up_circle_y = r_up * np.cos(upper_angles)
-    ms_low = critical_velocity_ratio(lower_surface_mach, gamma)
-    ms_up = critical_velocity_ratio(upper_surface_mach, gamma)
+    ms_low = critical_velocity_ratio(lower_surface_relative_flow_mach, gamma)
+    ms_up = critical_velocity_ratio(upper_surface_relative_flow_mach, gamma)
 
     # The pressure surface contains inlet transition, constant-Mach arc, and reversed outlet transition.
     pressure_x = np.concatenate([lower_in.x, low_circle_x[1:-1], lower_out.x[::-1]])
@@ -400,9 +410,11 @@ def design_ideal_geometry(
     # the upper transition is shorter. Eleven points reproduce the legacy
     # construction without affecting the analytic endpoints.
     inlet_straight_x = np.linspace(lower_in.x[0], upper_in.x[0], 11)
-    inlet_straight_y = upper_in.y[0] + math.tan(beta_in) * (inlet_straight_x - upper_in.x[0])
+    inlet_straight_y = upper_in.y[0] + math.tan(inlet_metal_angle_rad) * (inlet_straight_x - upper_in.x[0])
     outlet_straight_x = np.linspace(upper_out.x[0], lower_out.x[0], 11)
-    outlet_straight_y = upper_out.y[0] + math.tan(beta_out) * (outlet_straight_x - upper_out.x[0])
+    outlet_straight_y = upper_out.y[0] + math.tan(outlet_metal_angle_rad) * (
+        outlet_straight_x - upper_out.x[0]
+    )
 
     suction_x = np.concatenate(
         [inlet_straight_x[:-1], upper_in.x, up_circle_x[1:-1], upper_out.x[::-1], outlet_straight_x[1:]]
@@ -412,20 +424,20 @@ def design_ideal_geometry(
     )
     suction_ms = np.concatenate(
         [
-            np.full(10, critical_velocity_ratio(inlet_mach, gamma)),
+            np.full(10, critical_velocity_ratio(real_inlet_relative_flow_mach, gamma)),
             upper_in.mach_star,
             np.full(max(0, len(upper_angles) - 2), ms_up),
             upper_out.mach_star[::-1],
-            np.full(10, critical_velocity_ratio(outlet_mach, gamma)),
+            np.full(10, critical_velocity_ratio(ideal_outlet_relative_flow_mach, gamma)),
         ]
     )
     suction_eta = np.concatenate(
         [
-            np.full(10, abs(beta_in)),
+            np.full(10, abs(inlet_metal_angle_rad)),
             upper_in.eta,
             np.abs(upper_angles[1:-1]),
             upper_out.eta[::-1],
-            np.full(10, abs(beta_out)),
+            np.full(10, abs(outlet_metal_angle_rad)),
         ]
     )
 
@@ -451,8 +463,10 @@ def design_ideal_geometry(
         return SurfaceCoordinates(
             x=np.asarray(x[keep], dtype=float),
             y=np.asarray(y[keep], dtype=float),
-            mach=np.asarray(mach_from_critical_velocity_ratio(mach_star[keep], gamma), dtype=float),
-            tangent_angle_rad=np.asarray(eta[keep], dtype=float),
+            relative_flow_mach=np.asarray(
+                mach_from_critical_velocity_ratio(mach_star[keep], gamma), dtype=float
+            ),
+            metal_angle=np.asarray(np.degrees(eta[keep]), dtype=float),
         )
 
     return BladeShape(

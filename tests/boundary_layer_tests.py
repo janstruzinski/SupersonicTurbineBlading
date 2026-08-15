@@ -4,6 +4,7 @@ import warnings
 import numpy as np
 import pytest
 
+from SupersonicTurbineBlading.common_results import SurfaceCoordinates
 from SupersonicTurbineBlading.boundary_layer import boundary_layer_solver
 from SupersonicTurbineBlading.boundary_layer.boundary_layer_solver import (
     _laminar_solution,
@@ -40,14 +41,18 @@ def test_transition_form_factor_uses_calculated_transition_reynolds_number():
 def test_natural_transition_handoff_uses_corrected_form_factor(monkeypatch):
     gamma = 1.4
     prandtl_number = 0.72
-    transition_mach = 2.0
+    transition_relative_flow_mach = 2.0
     transition_reynolds_number = 1750.0
     laminar_incompressible_form = 2.4
-    temperature_factor = 1.0 + 0.5 * (gamma - 1.0) * transition_mach**2
+    temperature_factor = 1.0 + 0.5 * (gamma - 1.0) * transition_relative_flow_mach**2
     laminar_compressible_form = laminar_incompressible_form * temperature_factor + prandtl_number ** (1.0 / 3.0) * (
         temperature_factor - 1.0
     )
-    state = {"s": np.array([0.0, 1.0]), "mach": np.array([1.0, transition_mach]), "pr": prandtl_number}
+    state = {
+        "s": np.array([0.0, 1.0]),
+        "edge_flow_mach": np.array([1.0, transition_relative_flow_mach]),
+        "pr": prandtl_number,
+    }
     laminar = {
         "theta": np.array([0.01, 0.02]),
         "displacement": np.array([0.025, 0.02 * laminar_compressible_form]),
@@ -72,10 +77,16 @@ def test_natural_transition_handoff_uses_corrected_form_factor(monkeypatch):
 
     monkeypatch.setattr(boundary_layer_solver, "_turbulent_solution", fake_turbulent_solution)
 
+    surface = SurfaceCoordinates(
+        x=np.array([0.0, 1.0]),
+        y=np.array([0.0, 0.0]),
+        relative_flow_mach=np.array([1.0, transition_relative_flow_mach]),
+        metal_angle=np.array([0.0, 0.0]),
+    )
     boundary_layer_solver.solve_boundary_layer(
-        surface=None,
+        surface=surface,
         chord=1.0,
-        inlet_mach=1.0,
+        inlet_edge_flow_mach=1.0,
         chord_reynolds_number=1.0e6,
         gamma=gamma,
         fluid=None,
@@ -96,23 +107,23 @@ def test_natural_transition_handoff_uses_corrected_form_factor(monkeypatch):
 
 def test_application_correlation_limits_warn_only_when_extrapolating():
     s = np.linspace(0.0, 1.0, 21)
-    mach = np.linspace(2.0, 1.5, 21)
-    temperature = 1.0 / (1.0 + 0.2 * mach**2)
-    velocity = mach * np.sqrt(temperature)
+    relative_edge_flow_mach = np.linspace(2.0, 1.5, 21)
+    temperature = 1.0 / (1.0 + 0.2 * relative_edge_flow_mach**2)
+    velocity = relative_edge_flow_mach * np.sqrt(temperature)
     state = {
         "s": s,
         "sol": s,
-        "mach": mach,
+        "edge_flow_mach": relative_edge_flow_mach,
         "arcl": 1.0,
         "gamma": 1.4,
         "pr": 0.72,
         "nu_total": 1.0e-6,
-        "dmdl": np.gradient(mach, s),
+        "dmdl": np.gradient(relative_edge_flow_mach, s),
         "sw": np.zeros_like(s),
         "nu": np.full_like(s, 1.0e-6),
         "velocity": velocity,
         "duds": np.gradient(velocity, s),
-        "ff": 1.0 + 0.1599 * mach**2 + 0.0114 * mach**4,
+        "ff": 1.0 + 0.1599 * relative_edge_flow_mach**2 + 0.0114 * relative_edge_flow_mach**4,
     }
 
     with pytest.warns(RuntimeWarning, match="0.16.*extrapolating"):

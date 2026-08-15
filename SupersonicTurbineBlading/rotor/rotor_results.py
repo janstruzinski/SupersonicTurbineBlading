@@ -3,8 +3,37 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from ..common_results import SurfaceCoordinates
+
+
+@dataclass(frozen=True)
+class FlowStateTable:
+    """Printable absolute/relative rotor flow-state comparison.
+
+    :ivar rows: Flow-quantity label, absolute value, and rotor-relative value for each row.
+    """
+
+    rows: tuple[tuple[str, float, float], ...]
+    headers: ClassVar[tuple[str, str, str]] = ("Flow quantity", "Absolute frame", "Relative frame")
+
+    def __str__(self) -> str:
+        """Format the flow states as an aligned plain-text table.
+
+        :return: Table ready to pass to :func:`print`.
+        :rtype: str
+        """
+
+        formatted_rows = tuple((label, f"{absolute:.6g}", f"{relative:.6g}") for label, absolute, relative in self.rows)
+        columns = (self.headers,) + formatted_rows
+        widths = tuple(max(len(row[index]) for row in columns) for index in range(3))
+
+        def format_row(row: tuple[str, str, str]) -> str:
+            return " | ".join(value.ljust(width) for value, width in zip(row, widths))
+
+        separator = "-+-".join("-" * width for width in widths)
+        return "\n".join((format_row(self.headers), separator, *(format_row(row) for row in formatted_rows)))
 
 
 @dataclass(frozen=True)
@@ -72,18 +101,18 @@ class BladeShape:
 class StartingResult:
     """Store the supersonic-starting result calculated by NASA TN D-4421.
 
-    :ivar float maximum_starting_inlet_mach: Largest inlet Mach number that the passage can start, -.
-    :ivar float maximum_starting_inlet_prandtl_meyer_deg: Corresponding Prandtl--Meyer angle, deg.
-    :ivar float specified_inlet_mach: Rotor-relative inlet Mach number supplied to the starting test, -.
+    :ivar float maximum_starting_ideal_inlet_relative_flow_mach: Largest inlet Mach that the passage can start, -.
+    :ivar float maximum_starting_ideal_inlet_relative_prandtl_meyer_angle: Corresponding Prandtl--Meyer angle, deg.
+    :ivar float specified_ideal_inlet_relative_flow_mach: Rotor-relative inlet Mach supplied to the starting test, -.
     :ivar bool starts_supersonically: Whether the specified design lies below the calculated starting limit.
     :ivar float critical_vortex_constant: Vortex constant at maximum swallowed flow.
     :ivar float two_dimensional_flow_reduction: NASA TN D-4421 flow-reduction factor, -.
     :ivar float weight_flow_parameter: NASA TN D-4421 weight-flow parameter, -.
     """
 
-    maximum_starting_inlet_mach: float
-    maximum_starting_inlet_prandtl_meyer_deg: float
-    specified_inlet_mach: float
+    maximum_starting_ideal_inlet_relative_flow_mach: float
+    maximum_starting_ideal_inlet_relative_prandtl_meyer_angle: float
+    specified_ideal_inlet_relative_flow_mach: float
     starts_supersonically: bool
     critical_vortex_constant: float
     two_dimensional_flow_reduction: float

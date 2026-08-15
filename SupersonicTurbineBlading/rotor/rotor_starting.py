@@ -84,16 +84,19 @@ def _simpson(function: Callable[[float], float], lower: float, upper: float) -> 
 
 
 def calculate_starting_limit(
-    inlet_mach: float, lower_surface_mach: float, upper_surface_mach: float, gamma: float
+    ideal_inlet_relative_flow_mach: float,
+    lower_surface_relative_flow_mach: float,
+    upper_surface_relative_flow_mach: float,
+    gamma: float,
 ) -> StartingResult:
     """Port the ``START`` calculation in NASA TN D-4421.
 
     The result is the largest relative inlet Mach number that can swallow the
     assumed passage-spanning normal shock for the selected vortex radii.
 
-    :param float inlet_mach: Specified rotor-relative far-field inlet Mach number, -.
-    :param float lower_surface_mach: Constant pressure-side vortex Mach number, -.
-    :param float upper_surface_mach: Constant suction-side vortex Mach number, -.
+    :param float ideal_inlet_relative_flow_mach: Specified rotor-relative far-field inlet flow Mach, -.
+    :param float lower_surface_relative_flow_mach: Constant pressure-side vortex flow Mach, -.
+    :param float upper_surface_relative_flow_mach: Constant suction-side vortex flow Mach, -.
     :param float gamma: Frozen specific-heat ratio, -.
     :return: Starting limit and the intermediate NASA TN D-4421 diagnostics.
     :rtype: StartingResult
@@ -107,8 +110,8 @@ def calculate_starting_limit(
     gamma_plus = 0.5 * (gamma + 1.0)
     exponent = 1.0 / (gamma - 1.0)
     limiting_ratio = math.sqrt(gamma_plus / gamma_minus)
-    lower_mach_star = critical_velocity_ratio(lower_surface_mach, gamma)
-    upper_mach_star = critical_velocity_ratio(upper_surface_mach, gamma)
+    lower_mach_star = critical_velocity_ratio(lower_surface_relative_flow_mach, gamma)
+    upper_mach_star = critical_velocity_ratio(upper_surface_relative_flow_mach, gamma)
 
     def alfunc(a: float, b: float, argument: float) -> float:
         """Evaluate the repeated algebraic factor in the starting integrals.
@@ -228,16 +231,26 @@ def calculate_starting_limit(
     if bracket is None:
         raise ValueError("could not bracket maximum starting inlet Mach")
     maximum_mach_star = _bisect(lambda value: frat(value) - q_value, *bracket)
-    maximum_mach = mach_from_critical_velocity_ratio(maximum_mach_star, gamma)
-    maximum_nu = math.degrees(prandtl_meyer_angle(maximum_mach, gamma))
+    maximum_starting_ideal_inlet_relative_flow_mach = mach_from_critical_velocity_ratio(
+        maximum_mach_star, gamma
+    )
+    maximum_starting_ideal_inlet_relative_prandtl_meyer_angle = math.degrees(
+        prandtl_meyer_angle(maximum_starting_ideal_inlet_relative_flow_mach, gamma)
+    )
     weight_flow_parameter = (
         (1.0 / gamma_plus) ** (gamma_plus / (2.0 * gamma_minus)) * weight_integral if weight_integral else 0.0
     )
     return StartingResult(
-        maximum_starting_inlet_mach=maximum_mach,
-        maximum_starting_inlet_prandtl_meyer_deg=maximum_nu,
-        specified_inlet_mach=inlet_mach,
-        starts_supersonically=inlet_mach <= maximum_mach,
+        maximum_starting_ideal_inlet_relative_flow_mach=(
+            maximum_starting_ideal_inlet_relative_flow_mach
+        ),
+        maximum_starting_ideal_inlet_relative_prandtl_meyer_angle=(
+            maximum_starting_ideal_inlet_relative_prandtl_meyer_angle
+        ),
+        specified_ideal_inlet_relative_flow_mach=ideal_inlet_relative_flow_mach,
+        starts_supersonically=(
+            ideal_inlet_relative_flow_mach <= maximum_starting_ideal_inlet_relative_flow_mach
+        ),
         critical_vortex_constant=k_max,
         two_dimensional_flow_reduction=flow_reduction,
         weight_flow_parameter=weight_flow_parameter,
