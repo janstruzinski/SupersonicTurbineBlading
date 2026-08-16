@@ -12,11 +12,8 @@ from ..gas_dynamics import critical_velocity_ratio, mach_from_critical_velocity_
 from .rotor_results import StartingResult
 
 
-def calculate_starting_limit(
-    ideal_inlet_relative_flow_mach: float,
-    lower_surface_relative_flow_mach: float,
-    upper_surface_relative_flow_mach: float,
-    gamma: float) -> StartingResult:
+def calculate_starting_limit(ideal_inlet_relative_flow_mach: float, lower_surface_relative_flow_mach: float,
+                             upper_surface_relative_flow_mach: float, gamma: float) -> StartingResult:
     """Port the ``START`` calculation in NASA TN D-4421.
 
     The result is the largest relative inlet Mach number that can swallow the
@@ -142,17 +139,13 @@ def calculate_starting_limit(
     if bracket is None:
         raise ValueError("could not bracket maximum starting inlet Mach")
     maximum_mach_star = bisect(lambda value: frat(value) - q_value, *bracket, xtol=1.0e-10, maxiter=150)
-    maximum_starting_ideal_inlet_relative_flow_mach = mach_from_critical_velocity_ratio(maximum_mach_star, gamma)
-    maximum_starting_ideal_inlet_relative_prandtl_meyer_angle = math.degrees(
-        prandtl_meyer_angle(maximum_starting_ideal_inlet_relative_flow_mach, gamma))
-    weight_flow_parameter = (
-        (1.0 / gamma_plus) ** (gamma_plus / (2.0 * gamma_minus)) * weight_integral if weight_integral else 0.0)
-    return StartingResult(
-        maximum_starting_ideal_inlet_relative_flow_mach=maximum_starting_ideal_inlet_relative_flow_mach,
-        maximum_starting_ideal_inlet_relative_prandtl_meyer_angle=(
-            maximum_starting_ideal_inlet_relative_prandtl_meyer_angle),
+    maximum_mach = mach_from_critical_velocity_ratio(maximum_mach_star, gamma)
+    maximum_prandtl_meyer_angle = math.degrees(prandtl_meyer_angle(maximum_mach, gamma))
+    weight_flow_parameter = ((1.0 / gamma_plus) ** (gamma_plus / (2.0 * gamma_minus)) * weight_integral
+                             if weight_integral else 0.0)
+    return StartingResult(maximum_starting_ideal_inlet_relative_flow_mach=maximum_mach,
+        maximum_starting_ideal_inlet_relative_prandtl_meyer_angle=maximum_prandtl_meyer_angle,
         specified_ideal_inlet_relative_flow_mach=ideal_inlet_relative_flow_mach,
-        starts_supersonically=ideal_inlet_relative_flow_mach <= maximum_starting_ideal_inlet_relative_flow_mach,
-        critical_vortex_constant=k_max,
-        two_dimensional_flow_reduction=flow_reduction,
+        starts_supersonically=ideal_inlet_relative_flow_mach <= maximum_mach,
+        critical_vortex_constant=k_max, two_dimensional_flow_reduction=flow_reduction,
         weight_flow_parameter=weight_flow_parameter)

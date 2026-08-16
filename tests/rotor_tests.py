@@ -284,7 +284,8 @@ def test_fully_turbulent_mode_requires_both_inlet_thicknesses():
 
 @pytest.mark.parametrize(
     ("overrides", "message"),
-    [({"lower_surface_relative_flow_mach": math.nan}, "finite"), ({"upper_surface_relative_flow_mach": math.inf}, "finite")],
+    [({"lower_surface_relative_flow_mach": math.nan}, "finite"),
+     ({"upper_surface_relative_flow_mach": math.inf}, "finite")],
 )
 def test_surface_mach_inputs_must_be_finite(overrides, message):
     with pytest.raises(ValueError, match=message):
@@ -357,10 +358,14 @@ def test_relative_flow_input_set_reproduces_the_same_velocity_triangles_and_geom
         "ideal_outlet_relative_flow_angle",
     ):
         assert math.isclose(getattr(relative, name), getattr(absolute, name), rel_tol=1.0e-12, abs_tol=1.0e-12)
-    assert np.allclose(relative.uncorrected_shape.pressure_surface.x, absolute.uncorrected_shape.pressure_surface.x, atol=1.0e-13)
-    assert np.allclose(relative.uncorrected_shape.pressure_surface.y, absolute.uncorrected_shape.pressure_surface.y, atol=1.0e-13)
-    assert np.allclose(relative.uncorrected_shape.suction_surface.x, absolute.uncorrected_shape.suction_surface.x, atol=1.0e-13)
-    assert np.allclose(relative.uncorrected_shape.suction_surface.y, absolute.uncorrected_shape.suction_surface.y, atol=1.0e-13)
+    assert np.allclose(relative.uncorrected_shape.pressure_surface.x,
+                       absolute.uncorrected_shape.pressure_surface.x, atol=1.0e-13)
+    assert np.allclose(relative.uncorrected_shape.pressure_surface.y,
+                       absolute.uncorrected_shape.pressure_surface.y, atol=1.0e-13)
+    assert np.allclose(relative.uncorrected_shape.suction_surface.x,
+                       absolute.uncorrected_shape.suction_surface.x, atol=1.0e-13)
+    assert np.allclose(relative.uncorrected_shape.suction_surface.y,
+                       absolute.uncorrected_shape.suction_surface.y, atol=1.0e-13)
 
 
 def test_relative_flow_input_set_accepts_an_explicit_outlet_mach():
@@ -380,8 +385,10 @@ def test_relative_flow_input_set_accepts_an_explicit_outlet_mach():
     assert relative.requested_outlet_relative_flow_mach == absolute.ideal_outlet_relative_flow_mach
     assert math.isclose(relative.requested_outlet_absolute_flow_mach, 2.0, rel_tol=1.0e-12)
     assert math.isclose(relative.ideal_outlet_absolute_flow_mach, 2.0, rel_tol=1.0e-12)
-    assert np.allclose(relative.uncorrected_shape.pressure_surface.x, absolute.uncorrected_shape.pressure_surface.x, atol=1.0e-13)
-    assert np.allclose(relative.uncorrected_shape.suction_surface.y, absolute.uncorrected_shape.suction_surface.y, atol=1.0e-13)
+    assert np.allclose(relative.uncorrected_shape.pressure_surface.x,
+                       absolute.uncorrected_shape.pressure_surface.x, atol=1.0e-13)
+    assert np.allclose(relative.uncorrected_shape.suction_surface.y,
+                       absolute.uncorrected_shape.suction_surface.y, atol=1.0e-13)
 
 
 def test_absolute_and_relative_flow_input_sets_are_mutually_exclusive():
@@ -488,9 +495,8 @@ def test_leading_edge_thickness_ratio_is_bounded(ratio):
 
 def test_external_wave_correction_warns_for_supersonic_axial_inflow():
     with pytest.warns(RuntimeWarning, match="supersonic rotor-relative axial Mach"):
-        blade = make_blade(
-            ideal_inlet_absolute_flow_angle=60.0, upper_surface_relative_flow_mach=3.2, leading_edge_thickness_over_total_pitch=0.20
-        )
+        blade = make_blade(ideal_inlet_absolute_flow_angle=60.0, upper_surface_relative_flow_mach=3.2,
+                           leading_edge_thickness_over_total_pitch=0.20)
 
     assert blade.ideal_inlet_relative_flow_mach * math.cos(math.radians(blade.ideal_inlet_relative_flow_angle)) > 1.0
 
@@ -598,10 +604,13 @@ def test_optional_absolute_outlet_mach_controls_exit_construction():
     impulse = make_blade()
     asymmetric = make_blade(requested_outlet_absolute_flow_mach=2.0, mixing_solution="subsonic")
 
-    assert math.isclose(impulse.ideal_outlet_relative_flow_mach, impulse.ideal_inlet_relative_flow_mach, rel_tol=1.0e-12)
+    assert math.isclose(impulse.ideal_outlet_relative_flow_mach, impulse.ideal_inlet_relative_flow_mach,
+                        rel_tol=1.0e-12)
     assert math.isclose(asymmetric.requested_outlet_absolute_flow_mach, 2.0, rel_tol=1.0e-12)
-    assert math.isclose(asymmetric.ideal_outlet_absolute_flow_angle, asymmetric.requested_outlet_absolute_flow_angle, abs_tol=1.0e-10)
-    assert not math.isclose(asymmetric.ideal_outlet_relative_flow_mach, asymmetric.requested_outlet_absolute_flow_mach, rel_tol=1.0e-3)
+    assert math.isclose(asymmetric.ideal_outlet_absolute_flow_angle,
+                        asymmetric.requested_outlet_absolute_flow_angle, abs_tol=1.0e-10)
+    assert not math.isclose(asymmetric.ideal_outlet_relative_flow_mach,
+                            asymmetric.requested_outlet_absolute_flow_mach, rel_tol=1.0e-3)
     assert math.isclose(
         asymmetric.uncorrected_shape.pressure_surface.relative_flow_mach[-1],
         asymmetric.ideal_outlet_relative_flow_mach,
@@ -616,7 +625,8 @@ def test_optional_absolute_outlet_mach_controls_exit_construction():
 
 
 def test_iterated_outlet_metal_angle_keeps_specified_ideal_absolute_flow_mach():
-    blade = make_blade(requested_outlet_absolute_flow_mach=2.2, requested_outlet_absolute_flow_angle=-56.0, iterate_outlet_metal_angle=True)
+    blade = make_blade(requested_outlet_absolute_flow_mach=2.2, requested_outlet_absolute_flow_angle=-56.0,
+                       iterate_outlet_metal_angle=True)
     assert math.isclose(blade.requested_outlet_absolute_flow_mach, 2.2, rel_tol=1.0e-12)
     assert abs(blade.real_outlet_absolute_flow_angle + 56.0) < 2.0e-3
 
@@ -630,7 +640,8 @@ def test_coupled_iteration_matches_real_absolute_flow_mach_and_angle():
     )
     assert abs(blade.real_outlet_absolute_flow_angle + 56.0) < 2.0e-3
     assert abs(blade.real_outlet_absolute_flow_mach - 2.1) < 1.0e-4
-    assert not math.isclose(blade.ideal_outlet_absolute_flow_mach, blade.requested_outlet_absolute_flow_mach, rel_tol=1.0e-3)
+    assert not math.isclose(blade.ideal_outlet_absolute_flow_mach, blade.requested_outlet_absolute_flow_mach,
+                            rel_tol=1.0e-3)
 
 
 def test_coupled_iteration_flag_requires_metal_angle_iteration_and_flow_mach():
@@ -674,7 +685,8 @@ def test_legacy_pitch_closure_changes_metal_angle_and_closes_nasa_tm_x_2434_pitc
 
     assert blade.pitch_closure_iteration_count is not None
     assert blade.pitch_closure_outlet_metal_angle == (blade.outlet_metal_angle)
-    assert not math.isclose(blade.ideal_outlet_absolute_flow_angle, blade.requested_outlet_absolute_flow_angle, abs_tol=1.0e-3)
+    assert not math.isclose(blade.ideal_outlet_absolute_flow_angle, blade.requested_outlet_absolute_flow_angle,
+                            abs_tol=1.0e-3)
     assert abs(blade.pitch_closure_residual * blade.sonic_radius_scale) <= 1.0e-6
     assert blade.pitch_residual == blade.pitch_closure_residual
     assert not math.isclose(blade.corrected_pitch_residual, blade.pitch_closure_residual, abs_tol=1.0e-4)
@@ -916,15 +928,17 @@ def test_plot_adds_leading_edge_thickness_only_to_outer_surfaces():
     assert np.array_equal(upper_pressure.get_ydata(), shape.pressure_surface.y)
     assert np.array_equal(lower_suction.get_ydata(), shape.suction_surface.y)
     assert np.allclose(upper_suction.get_xdata(), shape.suction_surface.x + translation_x)
-    assert np.allclose(upper_suction.get_ydata(), shape.suction_surface.y + translation_y + blade.leading_edge_thickness)
+    assert np.allclose(upper_suction.get_ydata(),
+                       shape.suction_surface.y + translation_y + blade.leading_edge_thickness)
     assert np.allclose(lower_pressure.get_xdata(), shape.pressure_surface.x - translation_x)
-    assert np.allclose(lower_pressure.get_ydata(), shape.pressure_surface.y - translation_y - blade.leading_edge_thickness)
+    assert np.allclose(lower_pressure.get_ydata(),
+                       shape.pressure_surface.y - translation_y - blade.leading_edge_thickness)
     assert np.allclose(
-        upper_leading_edge.get_ydata(), [shape.pressure_surface.y[0] + blade.leading_edge_thickness, shape.pressure_surface.y[0]]
-    )
+        upper_leading_edge.get_ydata(),
+        [shape.pressure_surface.y[0] + blade.leading_edge_thickness, shape.pressure_surface.y[0]])
     assert np.allclose(
-        lower_leading_edge.get_ydata(), [shape.suction_surface.y[0], shape.suction_surface.y[0] - blade.leading_edge_thickness]
-    )
+        lower_leading_edge.get_ydata(),
+        [shape.suction_surface.y[0], shape.suction_surface.y[0] - blade.leading_edge_thickness])
 
     dimensional_figure, dimensional_axes = blade.plot(dimensional=True, corrected=True, show=False)
     dimensional_shape = blade.dimensional_shapes.corrected
@@ -933,8 +947,8 @@ def test_plot_adds_leading_edge_thickness_only_to_outer_surfaces():
     dimensional_translation_y = dimensional_shape.pressure_surface.y[0] - dimensional_shape.suction_surface.y[0]
     assert np.allclose(
         dimensional_upper_suction.get_ydata(),
-        1000.0 * (dimensional_shape.suction_surface.y + dimensional_translation_y + blade.physical_leading_edge_thickness),
-    )
+        1000.0 * (dimensional_shape.suction_surface.y + dimensional_translation_y
+                  + blade.physical_leading_edge_thickness))
     assert math.isclose(
         abs(float(np.diff(dimensional_upper_leading_edge.get_ydata())[0])),
         1000.0 * blade.physical_leading_edge_thickness,
@@ -959,7 +973,8 @@ def test_cad_profiles_store_corrected_and_uncorrected_geometry_in_millimetres(th
         lower_x = shape.pressure_surface.x - shape.pressure_surface.x[0]
         lower_y = shape.pressure_surface.y - shape.pressure_surface.y[0]
         upper_x = shape.suction_surface.x + translation_x - shape.pressure_surface.x[0]
-        upper_y = shape.suction_surface.y + translation_y + blade.physical_leading_edge_thickness - shape.pressure_surface.y[0]
+        upper_y = (shape.suction_surface.y + translation_y + blade.physical_leading_edge_thickness
+                   - shape.pressure_surface.y[0])
         upper_x_reversed = upper_x[::-1]
         upper_y_reversed = upper_y[::-1]
         if thickness_ratio == 0.0:

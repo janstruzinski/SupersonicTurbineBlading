@@ -54,8 +54,8 @@ def prandtl_meyer_angle(mach: float | np.ndarray, gamma: float) -> float | np.nd
     if np.any(mach < 1.0):
         raise ValueError("the Prandtl-Meyer relation requires Mach >= 1")
     root = np.sqrt(np.maximum(mach * mach - 1.0, 0.0))
-    value = math.sqrt((gamma + 1.0) / (gamma - 1.0)) * np.arctan(math.sqrt((gamma - 1.0) / (gamma + 1.0)) * root) \
-            - np.arctan(root)
+    value = (math.sqrt((gamma + 1.0) / (gamma - 1.0))
+             * np.arctan(math.sqrt((gamma - 1.0) / (gamma + 1.0)) * root) - np.arctan(root))
     return float(value) if np.ndim(value) == 0 else value
 
 

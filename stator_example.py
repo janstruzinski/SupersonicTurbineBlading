@@ -18,11 +18,7 @@ working_fluid = Fluid(coolprop_names=["Nitrogen", "Oxygen"], mass_fractions=[0.7
 # ---------------------------------------------------------------------------
 # Method-of-characteristics stator nozzle
 # ---------------------------------------------------------------------------
-moc_stator = SupersonicStatorNozzle(
-    # With match_real_outlet_absolute_flow_mach=False, this is the ideal absolute
-    # outlet flow Mach. When that option is True, it is the requested real
-    # absolute outlet flow Mach after mixing.
-    requested_outlet_absolute_flow_mach=1.77,
+moc_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77,
     requested_outlet_absolute_flow_angle=70.0,  # requested absolute outlet flow angle
     mass_flow_rate=5.0,  # total flow through the complete stator [kg/s]
     nozzle_count=30,
@@ -51,8 +47,7 @@ moc_stator = SupersonicStatorNozzle(
     initial_turbulent_momentum_thickness=5.0e-6,  # [m]
     # Axial Mach is subsonic in this highly turned example, so only the
     # ordinary subsonic mixed solution is available.
-    mixing_solution="subsonic",  # force subsonic solution; omit for automatic selection
-)
+    mixing_solution="subsonic")  # force subsonic solution; omit for automatic selection
 
 print("\nMOC stator nozzle")
 print(f"Throat-static gamma: {moc_stator.gamma:.5f}")
@@ -71,11 +66,9 @@ print(f"Calculated chord Reynolds number: {moc_stator.chord_reynolds_number:.3e}
 
 # Rotation into axial/tangential turbine coordinates occurs only for plotting;
 # stored geometry stays in the simpler nozzle-axis coordinate system.
-moc_stator.plot(
-    dimensional=True,  # default: False; dimensional plot axes are in mm
+moc_stator.plot(dimensional=True,  # default: False; dimensional plot axes are in mm
     ax=None,  # default: None; pass an existing Matplotlib axes if desired
-    show=True,  # default: True
-)
+    show=True)  # default: True
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +77,7 @@ moc_stator.plot(
 # This case uses the same operating point and fluid so that its circular
 # throat and contour can be compared directly with the rectangular MOC case.
 # throat_height is intentionally absent because it is not part of the conical input set.
-conical_stator = SupersonicStatorNozzle(
-    requested_outlet_absolute_flow_mach=1.77,
+conical_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77,
     requested_outlet_absolute_flow_angle=70.0,  # requested absolute outlet flow angle
     mass_flow_rate=5.0,  # total flow through all circular nozzles [kg/s]
     nozzle_count=30,
@@ -101,8 +93,7 @@ conical_stator = SupersonicStatorNozzle(
     boundary_layer_mode="fully_turbulent",
     initial_turbulent_displacement_thickness=2.0e-5,  # [m]
     initial_turbulent_momentum_thickness=5.0e-6,  # [m]
-    mixing_solution="subsonic",  # force subsonic solution; omit for automatic selection
-)
+    mixing_solution="subsonic")  # force subsonic solution; omit for automatic selection
 
 print("\nConical de Laval stator nozzle")
 print(f"Throat-static gamma: {conical_stator.gamma:.5f}")

@@ -176,11 +176,8 @@ class Fluid:
         try:
             value = float(CP.PropsSI(output, "T", temperature, "P", pressure, fluid_name))
         except Exception as error:
-            raise FluidPropertyError(
-                f"CoolProp could not evaluate {output!r} for "
-                f"{fluid_name!r} at T={temperature:.6g} K and "
-                f"P={pressure:.6g} Pa"
-            ) from error
+            raise FluidPropertyError(f"CoolProp could not evaluate {output!r} for {fluid_name!r} at "
+                                     f"T={temperature:.6g} K and P={pressure:.6g} Pa") from error
         if not math.isfinite(value) or value <= 0.0:
             raise FluidPropertyError(f"CoolProp returned an invalid {output!r} for {fluid_name!r}: {value}")
         return value
@@ -202,9 +199,8 @@ class Fluid:
 
         gas_phases = {"gas", "supercritical_gas", "supercritical"}
         if phase not in gas_phases:
-            raise FluidPropertyError(
-                f"{fluid_name!r} is {phase!r} at its partial-pressure state; the Fluid model is restricted to gases"
-            )
+            raise FluidPropertyError(f"{fluid_name!r} is {phase!r} at its partial-pressure state; "
+                                     "the Fluid model is restricted to gases")
 
     def properties(self, temperature: float, pressure: float) -> FluidState:
         """Return mixture properties at a temperature and absolute pressure.
@@ -261,19 +257,16 @@ class Fluid:
             # more accurate for mixtures with very different molecular masses.
             component_viscosity.append(self._state_property("VISCOSITY", temperature, partial_pressure, name))
 
-            # Thermal conductivity is the one additional transported property
-            # required by the NASA TM X-2434 and NASA TM X-2343 boundary-layer models, because Prandtl
-            # number is calculated as Cp*mu/k.  It uses the same explicit
-            # mass-fraction average requested for Cp and viscosity.
+            # Thermal conductivity is the additional property required by the NASA TM X-2434 and NASA TM X-2343
+            # boundary-layer models. Prandtl number is calculated as Cp*mu/k with the same explicit mass-fraction
+            # average requested for Cp and viscosity.
             component_conductivity.append(self._state_property("CONDUCTIVITY", temperature, partial_pressure, name))
 
         specific_heat_cp = math.fsum(fraction * value for fraction, value in zip(self.mass_fractions, component_cp))
-        dynamic_viscosity = math.fsum(
-            fraction * value for fraction, value in zip(self.mass_fractions, component_viscosity)
-        )
-        thermal_conductivity = math.fsum(
-            fraction * value for fraction, value in zip(self.mass_fractions, component_conductivity)
-        )
+        dynamic_viscosity = math.fsum(fraction * value
+                                      for fraction, value in zip(self.mass_fractions, component_viscosity))
+        thermal_conductivity = math.fsum(fraction * value
+                                         for fraction, value in zip(self.mass_fractions, component_conductivity))
 
         # The following properties do not require another CoolProp call.
         # They are consequences of the ideal-gas equation of state and the
@@ -287,20 +280,18 @@ class Fluid:
         prandtl_number = specific_heat_cp * dynamic_viscosity / thermal_conductivity
         speed_of_sound = math.sqrt(gamma * self.specific_gas_constant * temperature)
 
-        return FluidState(
-            temperature=temperature,
-            pressure=pressure,
-            density=density,
-            specific_heat_cp=specific_heat_cp,
-            specific_heat_cv=specific_heat_cv,
-            gamma=gamma,
-            dynamic_viscosity=dynamic_viscosity,
-            kinematic_viscosity=kinematic_viscosity,
-            thermal_conductivity=thermal_conductivity,
-            prandtl_number=prandtl_number,
-            speed_of_sound=speed_of_sound,
-            component_partial_pressures=partial_pressures,
-            component_specific_heats_cp=tuple(component_cp),
-            component_dynamic_viscosities=tuple(component_viscosity),
-            component_thermal_conductivities=tuple(component_conductivity),
-        )
+        return FluidState(temperature=temperature,
+                          pressure=pressure,
+                          density=density,
+                          specific_heat_cp=specific_heat_cp,
+                          specific_heat_cv=specific_heat_cv,
+                          gamma=gamma,
+                          dynamic_viscosity=dynamic_viscosity,
+                          kinematic_viscosity=kinematic_viscosity,
+                          thermal_conductivity=thermal_conductivity,
+                          prandtl_number=prandtl_number,
+                          speed_of_sound=speed_of_sound,
+                          component_partial_pressures=partial_pressures,
+                          component_specific_heats_cp=tuple(component_cp),
+                          component_dynamic_viscosities=tuple(component_viscosity),
+                          component_thermal_conductivities=tuple(component_conductivity))

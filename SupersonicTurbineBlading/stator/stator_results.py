@@ -47,15 +47,13 @@ class NozzleShape:
         :rtype: NozzleShape
         """
 
-        return NozzleShape(
-            pressure_surface=self.pressure_surface.scaled(factor),
-            suction_surface=self.suction_surface.scaled(factor),
-            chord=self.chord * factor,
-            throat_width=self.throat_width * factor,
-            exit_opening=self.exit_opening * factor,
-            spacing=self.spacing * factor,
-            coordinate_scale=scale_name,
-        )
+        return NozzleShape(pressure_surface=self.pressure_surface.scaled(factor),
+                           suction_surface=self.suction_surface.scaled(factor),
+                           chord=self.chord * factor,
+                           throat_width=self.throat_width * factor,
+                           exit_opening=self.exit_opening * factor,
+                           spacing=self.spacing * factor,
+                           coordinate_scale=scale_name)
 
 
 @dataclass(frozen=True)

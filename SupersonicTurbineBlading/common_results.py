@@ -61,12 +61,13 @@ class SurfaceCoordinates:
         :rtype: SurfaceCoordinates
         """
 
-        return SurfaceCoordinates(
-            x=np.asarray(self.x * factor, dtype=float),
-            y=np.asarray(self.y * factor, dtype=float),
-            metal_angle=self.metal_angle.copy(),
-            absolute_flow_mach=(None if self.absolute_flow_mach is None else self.absolute_flow_mach.copy()),
-            relative_flow_mach=(None if self.relative_flow_mach is None else self.relative_flow_mach.copy()))
+        return SurfaceCoordinates(x=np.asarray(self.x * factor, dtype=float),
+                                  y=np.asarray(self.y * factor, dtype=float),
+                                  metal_angle=self.metal_angle.copy(),
+                                  absolute_flow_mach=(None if self.absolute_flow_mach is None
+                                                      else self.absolute_flow_mach.copy()),
+                                  relative_flow_mach=(None if self.relative_flow_mach is None
+                                                      else self.relative_flow_mach.copy()))
 
 
 @dataclass(frozen=True)
@@ -105,9 +106,8 @@ class BoundaryLayerResult:
         """
 
         if (self.freestream_absolute_flow_mach is None) == (self.freestream_relative_flow_mach is None):
-            raise ValueError(
-                "exactly one of freestream_absolute_flow_mach and freestream_relative_flow_mach must be supplied"
-            )
+            raise ValueError("exactly one of freestream_absolute_flow_mach and freestream_relative_flow_mach "
+                             "must be supplied")
 
     def freestream_flow_mach_values(self) -> FloatArray:
         """Return the populated, explicitly framed freestream-flow-Mach array.

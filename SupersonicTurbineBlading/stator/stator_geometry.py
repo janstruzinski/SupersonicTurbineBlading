@@ -88,11 +88,8 @@ def _surface(x: np.ndarray, y: np.ndarray, absolute_flow_mach: np.ndarray) -> Su
     # arctan2(dy, dx) stays well behaved at the sharp throat and preserves the
     # sign difference between the pressure and suction passage walls.
     tangent = np.arctan2(np.gradient(y), np.gradient(x))
-    return SurfaceCoordinates(
-        x=x,
-        y=y,
-        absolute_flow_mach=absolute_flow_mach,
-        metal_angle=np.asarray(np.degrees(tangent), dtype=float))
+    return SurfaceCoordinates(x=x, y=y, absolute_flow_mach=absolute_flow_mach,
+                              metal_angle=np.asarray(np.degrees(tangent), dtype=float))
 
 
 @lru_cache(maxsize=128)
@@ -125,8 +122,9 @@ def _characteristic_contour(ideal_outlet_absolute_flow_mach: float, gamma: float
     # FORTRAN index I covers Prandtl--Meyer angles from zero to the exact exit
     # value.  Mach angles are cached in this local array because every
     # characteristic intersection uses the average of two adjacent regions.
-    absolute_flow_mach = np.asarray(
-        [mach_from_prandtl_meyer(index * increment, gamma) for index in range(2 * k_max_original - 1)], dtype=float)
+    prandtl_meyer_angles = np.arange(2 * k_max_original - 1, dtype=float) * increment
+    absolute_flow_mach = np.asarray([mach_from_prandtl_meyer(angle, gamma) for angle in prandtl_meyer_angles],
+                                    dtype=float)
     mach_angle = np.arcsin(1.0 / absolute_flow_mach)
 
     # Only two characteristic columns are needed at once.  This is the same
@@ -195,19 +193,13 @@ def _characteristic_contour(ideal_outlet_absolute_flow_mach: float, gamma: float
         y[:new_count, 0] = y[:new_count, 1]
         characteristic_count = new_count
 
-    return _MocContour(
-        x=np.asarray(contour_x, dtype=float),
-        y=np.asarray(contour_y, dtype=float),
-        absolute_flow_mach=np.asarray(contour_absolute_flow_mach, dtype=float),
-        actual_flow_turning_increment=math.degrees(increment))
+    return _MocContour(x=np.asarray(contour_x, dtype=float), y=np.asarray(contour_y, dtype=float),
+                       absolute_flow_mach=np.asarray(contour_absolute_flow_mach, dtype=float),
+                       actual_flow_turning_increment=math.degrees(increment))
 
 
-def design_ideal_stator_nozzle(
-    *,
-    ideal_outlet_absolute_flow_mach: float,
-    outlet_metal_angle: float,
-    number_of_nodes: int,
-    gamma: float) -> IdealNozzleConstruction:
+def design_ideal_stator_nozzle(*, ideal_outlet_absolute_flow_mach: float, outlet_metal_angle: float,
+                               number_of_nodes: int, gamma: float) -> IdealNozzleConstruction:
     """Design the uncorrected supersonic passage and straight suction section.
 
     ``outlet_metal_angle`` is measured from the machine axial direction.  The
@@ -255,36 +247,26 @@ def design_ideal_stator_nozzle(
     # the straight section.  It does not replace it with the exact input exit
     # Mach; AFMIX alone uses that exact free-stream value.  This distinction
     # is small but preserves the FORTRAN discretization faithfully.
-    suction_absolute_flow_mach = np.concatenate(
-        (stored_contour.absolute_flow_mach, np.full(straight_intervals, contour.absolute_flow_mach[-1])))
+    suction_absolute_flow_mach = np.concatenate((
+        stored_contour.absolute_flow_mach, np.full(straight_intervals, contour.absolute_flow_mach[-1])))
 
     pressure_x = stored_contour.x.copy()
     pressure_y = -stored_contour.y.copy()
     pressure_absolute_flow_mach = stored_contour.absolute_flow_mach.copy()
     spacing = 2.0 * exit_y / math.cos(outlet_metal_angle_rad)
 
-    shape = NozzleShape(
-        pressure_surface=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
-        suction_surface=_surface(suction_x, suction_y, suction_absolute_flow_mach),
-        chord=float(suction_x[-1]),
-        throat_width=2.0,
-        exit_opening=2.0 * exit_y,
-        spacing=spacing,
-        coordinate_scale="throat half-width")
-    return IdealNozzleConstruction(
-        shape=shape,
-        contour_point_count=len(stored_contour.x),
-        actual_flow_turning_increment=contour.actual_flow_turning_increment,
-        pressure_point_count=pressure_point_count)
+    shape = NozzleShape(pressure_surface=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
+                        suction_surface=_surface(suction_x, suction_y, suction_absolute_flow_mach),
+                        chord=float(suction_x[-1]), throat_width=2.0, exit_opening=2.0 * exit_y,
+                        spacing=spacing, coordinate_scale="throat half-width")
+    return IdealNozzleConstruction(shape=shape, contour_point_count=len(stored_contour.x),
+                                   actual_flow_turning_increment=contour.actual_flow_turning_increment,
+                                   pressure_point_count=pressure_point_count)
 
 
-def design_conical_stator_nozzle(
-    *,
-    ideal_outlet_absolute_flow_mach: float,
-    outlet_metal_angle: float,
-    half_cone_metal_angle: float,
-    number_of_nodes: int,
-    gamma: float) -> IdealNozzleConstruction:
+def design_conical_stator_nozzle(*, ideal_outlet_absolute_flow_mach: float, outlet_metal_angle: float,
+                                 half_cone_metal_angle: float, number_of_nodes: int,
+                                 gamma: float) -> IdealNozzleConstruction:
     """Design an axisymmetric straight-wall (conical) de Laval nozzle.
 
     The nozzle is axisymmetric. Coordinates are normalized by throat diameter:
@@ -339,26 +321,21 @@ def design_conical_stator_nozzle(
     pressure_radius = 0.5 + (exit_radius_over_throat_diameter - 0.5) * divergent_fraction
     pressure_y = -pressure_radius
     local_area_ratio = np.maximum((2.0 * pressure_radius) ** 2, 1.0)
-    pressure_absolute_flow_mach = np.asarray(
-        [supersonic_mach_from_area_ratio(float(area_ratio), gamma) for area_ratio in local_area_ratio], dtype=float)
+    pressure_absolute_flow_mach = np.asarray([
+        supersonic_mach_from_area_ratio(float(area_ratio), gamma) for area_ratio in local_area_ratio], dtype=float)
 
     straight_x = np.linspace(divergent_length, divergent_length + straight_length, number_of_nodes, dtype=float)[1:]
     suction_x = np.concatenate((pressure_x, straight_x))
     suction_y = np.concatenate((pressure_radius,
                                 np.full(number_of_nodes - 1, exit_radius_over_throat_diameter, dtype=float)))
-    suction_absolute_flow_mach = np.concatenate(
-        (pressure_absolute_flow_mach, np.full(number_of_nodes - 1, ideal_outlet_absolute_flow_mach, dtype=float)))
+    suction_absolute_flow_mach = np.concatenate((
+        pressure_absolute_flow_mach, np.full(number_of_nodes - 1, ideal_outlet_absolute_flow_mach, dtype=float)))
 
-    shape = NozzleShape(
-        pressure_surface=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
-        suction_surface=_surface(suction_x, suction_y, suction_absolute_flow_mach),
-        chord=float(suction_x[-1]),
-        throat_width=1.0,
-        exit_opening=2.0 * exit_radius_over_throat_diameter,
-        spacing=(2.0 * exit_radius_over_throat_diameter / math.cos(outlet_metal_angle_rad)),
-        coordinate_scale="throat diameter")
-    return IdealNozzleConstruction(
-        shape=shape,
-        contour_point_count=number_of_nodes,
-        actual_flow_turning_increment=None,
-        pressure_point_count=number_of_nodes)
+    shape = NozzleShape(pressure_surface=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
+                        suction_surface=_surface(suction_x, suction_y, suction_absolute_flow_mach),
+                        chord=float(suction_x[-1]), throat_width=1.0,
+                        exit_opening=2.0 * exit_radius_over_throat_diameter,
+                        spacing=2.0 * exit_radius_over_throat_diameter / math.cos(outlet_metal_angle_rad),
+                        coordinate_scale="throat diameter")
+    return IdealNozzleConstruction(shape=shape, contour_point_count=number_of_nodes,
+                                   actual_flow_turning_increment=None, pressure_point_count=number_of_nodes)

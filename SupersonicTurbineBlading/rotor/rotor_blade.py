@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
-from scipy.optimize import least_squares
+from scipy.optimize import brentq, fixed_point, least_squares, toms748
 
 from ..boundary_layer.boundary_layer_solver import BoundaryLayerError, BoundaryLayerMode, solve_boundary_layer
 from ..common_results import BoundaryLayerResult, SurfaceCoordinates
@@ -185,10 +185,7 @@ class SupersonicRotorBlade:
         and origin convention as :attr:`blade_profile_y_CAD`.
     """
 
-    def __init__(
-        self,
-        *,
-        ideal_inlet_absolute_flow_mach: float | None = None,
+    def __init__(self, *, ideal_inlet_absolute_flow_mach: float | None = None,
         ideal_inlet_absolute_flow_angle: float | None = None,
         requested_outlet_absolute_flow_angle: float | None = None,
         requested_outlet_absolute_flow_mach: float | None = None,
@@ -266,14 +263,14 @@ class SupersonicRotorBlade:
         self.inlet_total_temperature = float(inlet_total_temperature)
         self.inlet_total_pressure = float(inlet_total_pressure)
         self.wheel_speed = 2.0 * math.pi * self.mean_radius * self.rotational_speed_rpm / 60.0
-        self.requested_outlet_absolute_flow_angle = (
-            None if requested_outlet_absolute_flow_angle is None else float(requested_outlet_absolute_flow_angle))
-        self.requested_outlet_relative_flow_angle = (
-            None if requested_outlet_relative_flow_angle is None else float(requested_outlet_relative_flow_angle))
-        self._requested_outlet_absolute_flow_mach = (
-            None if requested_outlet_absolute_flow_mach is None else float(requested_outlet_absolute_flow_mach))
-        self._requested_outlet_relative_flow_mach = (
-            None if requested_outlet_relative_flow_mach is None else float(requested_outlet_relative_flow_mach))
+        self.requested_outlet_absolute_flow_angle = (None if requested_outlet_absolute_flow_angle is None
+                                                     else float(requested_outlet_absolute_flow_angle))
+        self.requested_outlet_relative_flow_angle = (None if requested_outlet_relative_flow_angle is None
+                                                     else float(requested_outlet_relative_flow_angle))
+        self._requested_outlet_absolute_flow_mach = (None if requested_outlet_absolute_flow_mach is None
+                                                     else float(requested_outlet_absolute_flow_mach))
+        self._requested_outlet_relative_flow_mach = (None if requested_outlet_relative_flow_mach is None
+                                                     else float(requested_outlet_relative_flow_mach))
 
         # Keep the total-state properties as a useful diagnostic, but do not
         # use their gamma for the gas-dynamic design.  Gamma must represent
@@ -287,14 +284,13 @@ class SupersonicRotorBlade:
         if self.flow_input_reference_frame == "absolute":
             self.ideal_inlet_absolute_flow_mach = float(ideal_inlet_absolute_flow_mach)
             self.ideal_inlet_absolute_flow_angle = float(ideal_inlet_absolute_flow_angle)
-            (self.inlet_static_temperature, self.inlet_static_pressure, self.inlet_static_fluid_state) = (
-                self._solve_inlet_static_reference_state(initial_gamma=self.inlet_total_fluid_state.gamma))
+            (self.inlet_static_temperature, self.inlet_static_pressure, self.inlet_static_fluid_state) = \
+                self._solve_inlet_static_reference_state(initial_gamma=self.inlet_total_fluid_state.gamma)
         else:
             self.ideal_inlet_relative_flow_mach = float(ideal_inlet_relative_flow_mach)
             self.ideal_inlet_relative_flow_angle = float(ideal_inlet_relative_flow_angle)
-            (self.inlet_static_temperature, self.inlet_static_pressure, self.inlet_static_fluid_state) = (
-                self._solve_inlet_static_reference_state_from_relative(
-                    initial_gamma=self.inlet_total_fluid_state.gamma))
+            (self.inlet_static_temperature, self.inlet_static_pressure, self.inlet_static_fluid_state) = \
+                self._solve_inlet_static_reference_state_from_relative(initial_gamma=self.inlet_total_fluid_state.gamma)
         self.gamma = float(self.inlet_static_fluid_state.gamma)
         self.prandtl_number = float(self.inlet_static_fluid_state.prandtl_number)
 
@@ -309,11 +305,11 @@ class SupersonicRotorBlade:
                 absolute_inlet_flow_angle_rad)
             self.relative_inlet_axial_velocity = self.absolute_inlet_axial_velocity
             self.relative_inlet_tangential_velocity = self.absolute_inlet_tangential_velocity - self.wheel_speed
-            self.relative_inlet_speed = math.hypot(
-                self.relative_inlet_axial_velocity, self.relative_inlet_tangential_velocity)
+            self.relative_inlet_speed = math.hypot(self.relative_inlet_axial_velocity,
+                                                   self.relative_inlet_tangential_velocity)
             self.ideal_inlet_relative_flow_mach = self.relative_inlet_speed / inlet_speed_of_sound
-            self.ideal_inlet_relative_flow_angle = math.degrees(
-                math.atan2(self.relative_inlet_tangential_velocity, self.relative_inlet_axial_velocity))
+            self.ideal_inlet_relative_flow_angle = math.degrees(math.atan2(
+                self.relative_inlet_tangential_velocity, self.relative_inlet_axial_velocity))
         else:
             self.relative_inlet_speed = self.ideal_inlet_relative_flow_mach * inlet_speed_of_sound
             relative_inlet_flow_angle_rad = math.radians(self.ideal_inlet_relative_flow_angle)
@@ -322,11 +318,11 @@ class SupersonicRotorBlade:
                 relative_inlet_flow_angle_rad)
             self.absolute_inlet_axial_velocity = self.relative_inlet_axial_velocity
             self.absolute_inlet_tangential_velocity = self.relative_inlet_tangential_velocity + self.wheel_speed
-            self.absolute_inlet_speed = math.hypot(
-                self.absolute_inlet_axial_velocity, self.absolute_inlet_tangential_velocity)
+            self.absolute_inlet_speed = math.hypot(self.absolute_inlet_axial_velocity,
+                                                   self.absolute_inlet_tangential_velocity)
             self.ideal_inlet_absolute_flow_mach = self.absolute_inlet_speed / inlet_speed_of_sound
-            self.ideal_inlet_absolute_flow_angle = math.degrees(
-                math.atan2(self.absolute_inlet_tangential_velocity, self.absolute_inlet_axial_velocity))
+            self.ideal_inlet_absolute_flow_angle = math.degrees(math.atan2(
+                self.absolute_inlet_tangential_velocity, self.absolute_inlet_axial_velocity))
         self.leading_edge_thickness_over_total_pitch = float(leading_edge_thickness_over_total_pitch)
         self.use_leading_edge_entry_correction = bool(use_leading_edge_entry_correction)
         (self.real_inlet_relative_flow_mach, self.real_inlet_relative_flow_angle) = self._passage_entry_conditions()
@@ -338,18 +334,18 @@ class SupersonicRotorBlade:
 
         relative_temperature_factor = 1.0 + 0.5 * (self.gamma - 1.0) * self.ideal_inlet_relative_flow_mach**2
         self.relative_inlet_total_temperature = self.inlet_static_temperature * relative_temperature_factor
-        self.relative_inlet_total_pressure = self.inlet_static_pressure * relative_temperature_factor ** (
-            self.gamma / (self.gamma - 1.0))
-        self.relative_inlet_total_fluid_state = self.fluid.properties(
-            self.relative_inlet_total_temperature, self.relative_inlet_total_pressure)
+        self.relative_inlet_total_pressure = self.inlet_static_pressure * relative_temperature_factor ** \
+                                             (self.gamma / (self.gamma - 1.0))
+        self.relative_inlet_total_fluid_state = self.fluid.properties(self.relative_inlet_total_temperature,
+                                                                      self.relative_inlet_total_pressure)
         passage_temperature_factor = 1.0 + 0.5 * (self.gamma - 1.0) * self.real_inlet_relative_flow_mach**2
         self.passage_inlet_static_temperature = self.relative_inlet_total_temperature / passage_temperature_factor
-        self.passage_inlet_static_pressure = self.relative_inlet_total_pressure / passage_temperature_factor ** (
-            self.gamma / (self.gamma - 1.0))
-        self.passage_inlet_static_fluid_state = self.fluid.properties(
-            self.passage_inlet_static_temperature, self.passage_inlet_static_pressure)
-        self.passage_inlet_speed_of_sound = math.sqrt(
-            self.gamma * self.fluid.specific_gas_constant * self.passage_inlet_static_temperature)
+        self.passage_inlet_static_pressure = self.relative_inlet_total_pressure / passage_temperature_factor ** \
+                                             (self.gamma / (self.gamma - 1.0))
+        self.passage_inlet_static_fluid_state = self.fluid.properties(self.passage_inlet_static_temperature,
+                                                                      self.passage_inlet_static_pressure)
+        self.passage_inlet_speed_of_sound = math.sqrt(self.gamma * self.fluid.specific_gas_constant
+                                                      * self.passage_inlet_static_temperature)
         real_inlet_absolute_state = self._relative_flow_state_to_absolute(
             relative_flow_mach=self.real_inlet_relative_flow_mach,
             relative_flow_angle_rad=math.radians(self.real_inlet_relative_flow_angle))
@@ -370,17 +366,14 @@ class SupersonicRotorBlade:
                 self.requested_outlet_relative_flow_angle = requested_outlet_state["relative_flow_angle"]
         else:
             self.requested_outlet_relative_flow_mach = self._requested_outlet_relative_flow_mach
-            requested_relative_flow_mach = (
-                self.ideal_inlet_relative_flow_mach
-                if self._requested_outlet_relative_flow_mach is None
-                else self._requested_outlet_relative_flow_mach)
+            requested_relative_flow_mach = (self.ideal_inlet_relative_flow_mach
+                                            if self._requested_outlet_relative_flow_mach is None
+                                            else self._requested_outlet_relative_flow_mach)
             requested_outlet_state = self._relative_flow_state_to_absolute(
                 relative_flow_mach=requested_relative_flow_mach,
                 relative_flow_angle_rad=math.radians(self.requested_outlet_relative_flow_angle))
-            self.requested_outlet_absolute_flow_mach = (
-                None
-                if self._requested_outlet_relative_flow_mach is None
-                else requested_outlet_state["absolute_flow_mach"])
+            self.requested_outlet_absolute_flow_mach = (None if self._requested_outlet_relative_flow_mach is None
+                                                        else requested_outlet_state["absolute_flow_mach"])
             self.requested_outlet_absolute_flow_angle = requested_outlet_state["absolute_flow_angle"]
         self.number_of_nodes = int(number_of_nodes)
         self.iterate_outlet_metal_angle = bool(iterate_outlet_metal_angle)
@@ -388,12 +381,10 @@ class SupersonicRotorBlade:
         self.iterate_pitch_closure = bool(iterate_pitch_closure)
         self.calculate_starting = bool(calculate_starting)
         self.boundary_layer_mode = boundary_layer_mode
-        self.initial_turbulent_displacement_thickness = (
-            None
-            if initial_turbulent_displacement_thickness is None
-            else float(initial_turbulent_displacement_thickness))
-        self.initial_turbulent_momentum_thickness = (
-            None if initial_turbulent_momentum_thickness is None else float(initial_turbulent_momentum_thickness))
+        self.initial_turbulent_displacement_thickness = (None if initial_turbulent_displacement_thickness is None
+                                                         else float(initial_turbulent_displacement_thickness))
+        self.initial_turbulent_momentum_thickness = (None if initial_turbulent_momentum_thickness is None
+                                                     else float(initial_turbulent_momentum_thickness))
         self._mixing_solution_override = mixing_solution
         self._evaluation_cache: dict[tuple[float, float], _RotorEvaluation] = {}
         self.dimensional_shapes: DimensionalBladeShapes | None = None
@@ -406,10 +397,9 @@ class SupersonicRotorBlade:
         # the trial metal angle changes.
         if self.iterate_pitch_closure:
             if self.flow_input_reference_frame == "relative":
-                ideal_outlet_relative_flow_mach = (
-                    self.ideal_inlet_relative_flow_mach
-                    if self._requested_outlet_relative_flow_mach is None
-                    else self._requested_outlet_relative_flow_mach)
+                ideal_outlet_relative_flow_mach = (self.ideal_inlet_relative_flow_mach
+                                                   if self._requested_outlet_relative_flow_mach is None
+                                                   else self._requested_outlet_relative_flow_mach)
                 initial_outlet_metal_angle = self.requested_outlet_relative_flow_angle
             else:
                 if self._requested_outlet_absolute_flow_mach is None:
@@ -427,25 +417,23 @@ class SupersonicRotorBlade:
                 initial_outlet_metal_angle=initial_outlet_metal_angle,
                 ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach)
             requested_angle_name = f"requested_outlet_{self.flow_input_reference_frame}_flow_angle"
-            warnings.warn(
-                "legacy pitch closure changes the outlet metal angle from its "
+            warnings.warn("legacy pitch closure changes the outlet metal angle from its "
                 f"initial {initial_outlet_metal_angle:.6g} deg to "
                 f"{outlet_metal_angle:.6g} deg; {requested_angle_name} is used only "
                 "as the initial estimate",
                 UserWarning,
                 stacklevel=2)
         elif self.match_real_outlet_mach:
-            (outlet_metal_angle, ideal_outlet_relative_flow_mach) = (
-                self._solve_outlet_metal_angle_and_flow_mach_targets())
+            outlet_metal_angle, ideal_outlet_relative_flow_mach = \
+                self._solve_outlet_metal_angle_and_flow_mach_targets()
         elif self.iterate_outlet_metal_angle:
             outlet_metal_angle = self._solve_outlet_metal_angle_for_target_flow()
             ideal_outlet_relative_flow_mach = self._ideal_outlet_relative_flow_mach_for_metal_angle(outlet_metal_angle)
         else:
             if self.flow_input_reference_frame == "relative":
-                ideal_outlet_relative_flow_mach = (
-                    self.ideal_inlet_relative_flow_mach
-                    if self._requested_outlet_relative_flow_mach is None
-                    else self._requested_outlet_relative_flow_mach)
+                ideal_outlet_relative_flow_mach = (self.ideal_inlet_relative_flow_mach
+                                                   if self._requested_outlet_relative_flow_mach is None
+                                                   else self._requested_outlet_relative_flow_mach)
                 outlet_metal_angle = self.requested_outlet_relative_flow_angle
             else:
                 if self._requested_outlet_absolute_flow_mach is None:
@@ -490,21 +478,21 @@ class SupersonicRotorBlade:
         self.boundary_layer_suction_station_count = len(self.suction_boundary_layer_marching.s_over_chord)
         self.corrected_pitch_residual = float(evaluation.pitch_residual)
         self.pitch_closure_residual = float(evaluation.corrected.outlet_pitch - evaluation.ideal.inlet_pitch)
-        self.pitch_residual = (
-            self.pitch_closure_residual if self.iterate_pitch_closure else self.corrected_pitch_residual)
+        self.pitch_residual = self.pitch_closure_residual if self.iterate_pitch_closure \
+            else self.corrected_pitch_residual
         self.inlet_passage_pitch = float(evaluation.ideal.inlet_pitch)
         self.inlet_total_pitch = self.inlet_passage_pitch / (1.0 - self.leading_edge_thickness_over_total_pitch)
         self.solidity = float(evaluation.ideal.chord / self.inlet_total_pitch)
         self.leading_edge_thickness = float(evaluation.leading_edge_thickness)
         self.trailing_edge_thickness = float(evaluation.trailing_edge_thickness)
-        self.trailing_edge_vertical_boundary_layer_height = float(
-            evaluation.trailing_edge_vertical_boundary_layer_height)
+        self.trailing_edge_vertical_boundary_layer_height = \
+            float(evaluation.trailing_edge_vertical_boundary_layer_height)
         if (self.leading_edge_thickness > 0.0
             and self.trailing_edge_thickness == 0.0
             and self.trailing_edge_vertical_boundary_layer_height > self.leading_edge_thickness
             and not self.iterate_pitch_closure):
-            warnings.warn(
-                "the summed vertical trailing-edge boundary-layer displacement exceeds t_LE; t_TE is limited to zero",
+            warnings.warn("the summed vertical trailing-edge boundary-layer displacement "
+                "exceeds t_LE; t_TE is limited to zero",
                 RuntimeWarning,
                 stacklevel=2)
         self.mixing_results = evaluation.mixing
@@ -520,32 +508,23 @@ class SupersonicRotorBlade:
         self.real_outlet_relative_axial_flow_mach = float(selected_mixing["real_outlet_relative_axial_flow_mach"])
         self.ideal_outlet_relative_axial_flow_mach = float(selected_mixing["ideal_outlet_relative_axial_flow_mach"])
         self.supersonic_mixing_available = bool(self.mixing_results["supersonic"]["available"])
-        self.flow_state_table = FlowStateTable(
-            rows=(
-                ("Ideal flow angle at the inlet upstream",
-                 self.ideal_inlet_absolute_flow_angle,
-                 self.ideal_inlet_relative_flow_angle),
-                ("Ideal Mach number at the inlet upstream",
-                 self.ideal_inlet_absolute_flow_mach,
-                 self.ideal_inlet_relative_flow_mach),
-                ("Real flow angle at the blade inlet",
-                 self.real_inlet_absolute_flow_angle,
-                 self.real_inlet_relative_flow_angle),
-                ("Real Mach number at the blade inlet",
-                 self.real_inlet_absolute_flow_mach,
-                 self.real_inlet_relative_flow_mach),
-                ("Ideal flow angle at the blade outlet",
-                 self.ideal_outlet_absolute_flow_angle,
-                 self.ideal_outlet_relative_flow_angle),
-                ("Ideal Mach number at the blade outlet",
-                 self.ideal_outlet_absolute_flow_mach,
-                 self.ideal_outlet_relative_flow_mach),
-                ("Real flow angle at the blade outlet",
-                 self.real_outlet_absolute_flow_angle,
-                 self.real_outlet_relative_flow_angle),
-                ("Real Mach number at the blade outlet",
-                 self.real_outlet_absolute_flow_mach,
-                 self.real_outlet_relative_flow_mach)))
+        self.flow_state_table = FlowStateTable(rows=(
+            ("Ideal flow angle at the inlet upstream", self.ideal_inlet_absolute_flow_angle,
+             self.ideal_inlet_relative_flow_angle),
+            ("Ideal Mach number at the inlet upstream", self.ideal_inlet_absolute_flow_mach,
+             self.ideal_inlet_relative_flow_mach),
+            ("Real flow angle at the blade inlet", self.real_inlet_absolute_flow_angle,
+             self.real_inlet_relative_flow_angle),
+            ("Real Mach number at the blade inlet", self.real_inlet_absolute_flow_mach,
+             self.real_inlet_relative_flow_mach),
+            ("Ideal flow angle at the blade outlet", self.ideal_outlet_absolute_flow_angle,
+             self.ideal_outlet_relative_flow_angle),
+            ("Ideal Mach number at the blade outlet", self.ideal_outlet_absolute_flow_mach,
+             self.ideal_outlet_relative_flow_mach),
+            ("Real flow angle at the blade outlet", self.real_outlet_absolute_flow_angle,
+             self.real_outlet_relative_flow_angle),
+            ("Real Mach number at the blade outlet", self.real_outlet_absolute_flow_mach,
+             self.real_outlet_relative_flow_mach)))
 
         # Store the dimensional and Reynolds scales that were used for the
         # final boundary-layer calculation.  In iterative outlet-angle mode,
@@ -554,23 +533,21 @@ class SupersonicRotorBlade:
         self.physical_total_pitch = final_scale.total_pitch
         self.physical_passage_pitch = final_scale.passage_pitch
         self.physical_leading_edge_thickness = final_scale.leading_edge_thickness
-        self.physical_trailing_edge_thickness = (
-            self.physical_leading_edge_thickness
-            if self.iterate_pitch_closure
-            else self.trailing_edge_thickness * final_scale.sonic_radius)
+        self.physical_trailing_edge_thickness = (self.physical_leading_edge_thickness
+                                                 if self.iterate_pitch_closure
+                                                 else self.trailing_edge_thickness * final_scale.sonic_radius)
         # Backward-compatible name: machine pitch has always been 2*pi*r/Z.
         self.physical_pitch = self.physical_total_pitch
         self.sonic_radius_scale = final_scale.sonic_radius
         self.physical_chord = final_scale.chord
         self.chord_reynolds_number = final_scale.chord_reynolds_number
         self.blade_profile_x_CAD, self.blade_profile_y_CAD = self._assemble_cad_profile(self.corrected_shape)
-        self.uncorrected_blade_profile_x_CAD, self.uncorrected_blade_profile_y_CAD = self._assemble_cad_profile(
-            self.uncorrected_shape)
-        self.starting_result = (calculate_starting_limit(
-            self.ideal_inlet_relative_flow_mach,
-            self.lower_surface_relative_flow_mach,
-            self.upper_surface_relative_flow_mach,
-            self.gamma) if self.calculate_starting else None)
+        self.uncorrected_blade_profile_x_CAD, self.uncorrected_blade_profile_y_CAD = \
+            self._assemble_cad_profile(self.uncorrected_shape)
+        self.starting_result = (calculate_starting_limit(self.ideal_inlet_relative_flow_mach,
+                                                         self.lower_surface_relative_flow_mach,
+                                                         self.upper_surface_relative_flow_mach, self.gamma)
+                                if self.calculate_starting else None)
 
     @staticmethod
     def _identify_flow_input_reference_frame(**values) -> FlowInputReferenceFrame:
@@ -710,8 +687,8 @@ class SupersonicRotorBlade:
 
         return flow_input_reference_frame
 
-    def _select_mixing_result(
-        self, mixing: dict[str, dict[str, float | bool]]) -> tuple[MixingSolution, dict[str, float | bool]]:
+    def _select_mixing_result(self, mixing: dict[str, dict[str, float | bool]]) \
+            -> tuple[MixingSolution, dict[str, float | bool]]:
         """Select one aftermixing solution for the current design trial.
 
         :param dict mixing: Subsonic and supersonic aftermixing results.
@@ -724,9 +701,8 @@ class SupersonicRotorBlade:
         else:
             supersonic = mixing["supersonic"]
             ideal_outlet_relative_axial_flow_mach = float(supersonic["ideal_outlet_relative_axial_flow_mach"])
-            solution = ("supersonic"
-                        if ideal_outlet_relative_axial_flow_mach >= 1.0 and bool(supersonic["available"])
-                        else "subsonic")
+            solution = ("supersonic" if ideal_outlet_relative_axial_flow_mach >= 1.0
+                        and bool(supersonic["available"]) else "subsonic")
         return solution, mixing[solution]
 
     def _passage_entry_conditions(self) -> tuple[float, float]:
@@ -757,11 +733,10 @@ class SupersonicRotorBlade:
         if not self.use_leading_edge_entry_correction or thickness_ratio == 0.0:
             return ideal_inlet_relative_flow_mach, self.ideal_inlet_relative_flow_angle
 
-        ideal_inlet_relative_axial_flow_mach = ideal_inlet_relative_flow_mach * math.cos(
-            ideal_inlet_relative_flow_angle_rad)
+        ideal_inlet_relative_axial_flow_mach = \
+            ideal_inlet_relative_flow_mach * math.cos(ideal_inlet_relative_flow_angle_rad)
         if ideal_inlet_relative_axial_flow_mach >= 1.0:
-            warnings.warn(
-                "the finite-leading-edge external-wave entry correction "
+            warnings.warn("the finite-leading-edge external-wave entry correction "
                 "is being used with supersonic rotor-relative axial Mach "
                 f"({ideal_inlet_relative_axial_flow_mach:.6g}); NACA RM L52B06 derives this method for "
                 "subsonic axial inflow",
@@ -786,8 +761,8 @@ class SupersonicRotorBlade:
                                                   - ideal_inlet_relative_prandtl_meyer_angle)
             if not 0.0 < real_inlet_relative_flow_angle_rad < 0.5 * math.pi:
                 return math.nan, real_inlet_relative_flow_angle_rad
-            area_ratio = float(isentropic_area_ratio(real_inlet_relative_flow_mach, gamma)) / (
-                ideal_inlet_relative_flow_area_ratio)
+            area_ratio = (float(isentropic_area_ratio(real_inlet_relative_flow_mach, gamma))
+                          / ideal_inlet_relative_flow_area_ratio)
             geometric_ratio = (1.0 - thickness_ratio) * math.cos(real_inlet_relative_flow_angle_rad) \
                               / math.cos(ideal_inlet_relative_flow_angle_rad)
             return area_ratio - geometric_ratio, real_inlet_relative_flow_angle_rad
@@ -817,25 +792,14 @@ class SupersonicRotorBlade:
                 "t_LE/G_total and far-field rotor-relative inlet state")
 
         lower_real_inlet_relative_flow_mach, upper_real_inlet_relative_flow_mach = brackets[-1]
-        if lower_real_inlet_relative_flow_mach != upper_real_inlet_relative_flow_mach:
-            lower_residual, _ = state(lower_real_inlet_relative_flow_mach)
-            for _ in range(100):
-                midpoint_real_inlet_relative_flow_mach = 0.5 * (
-                    lower_real_inlet_relative_flow_mach + upper_real_inlet_relative_flow_mach)
-                midpoint_residual, _ = state(midpoint_real_inlet_relative_flow_mach)
-                if (abs(midpoint_residual) <= 1.0e-13
-                    or upper_real_inlet_relative_flow_mach - lower_real_inlet_relative_flow_mach
-                    <= 1.0e-13 * ideal_inlet_relative_flow_mach):
-                    lower_real_inlet_relative_flow_mach = midpoint_real_inlet_relative_flow_mach
-                    upper_real_inlet_relative_flow_mach = midpoint_real_inlet_relative_flow_mach
-                    break
-                if lower_residual * midpoint_residual <= 0.0:
-                    upper_real_inlet_relative_flow_mach = midpoint_real_inlet_relative_flow_mach
-                else:
-                    lower_real_inlet_relative_flow_mach = midpoint_real_inlet_relative_flow_mach
-                    lower_residual = midpoint_residual
-        real_inlet_relative_flow_mach = \
-            0.5 * (lower_real_inlet_relative_flow_mach + upper_real_inlet_relative_flow_mach)
+        if lower_real_inlet_relative_flow_mach == upper_real_inlet_relative_flow_mach:
+            real_inlet_relative_flow_mach = lower_real_inlet_relative_flow_mach
+        else:
+            # The scan above chooses the weak-wave branch; TOMS 748 then refines only that physical intersection.
+            real_inlet_relative_flow_mach = toms748(lambda mach: state(mach)[0],
+                lower_real_inlet_relative_flow_mach,
+                upper_real_inlet_relative_flow_mach, xtol=1.0e-13 * ideal_inlet_relative_flow_mach,
+                rtol=1.0e-14, maxiter=100)
         residual, real_inlet_relative_flow_angle_rad = state(real_inlet_relative_flow_mach)
         if not math.isfinite(residual):
             raise DesignConvergenceError("finite-leading-edge entry solution left the physical flow-angle domain")
@@ -880,8 +844,7 @@ class SupersonicRotorBlade:
         self._validate_surface_mach_ranges(
             ideal_outlet_relative_flow_mach=self.ideal_inlet_relative_flow_mach, outlet_metal_angle=None)
 
-    def _surface_mach_ranges(
-        self, *, ideal_outlet_relative_flow_mach: float,
+    def _surface_mach_ranges(self, *, ideal_outlet_relative_flow_mach: float,
         outlet_metal_angle: float | None) -> tuple[float, float, float, float]:
         """Return NASA TN D-4421 feasible lower/upper surface-Mach intervals.
 
@@ -924,8 +887,8 @@ class SupersonicRotorBlade:
                          else float(mach_from_prandtl_meyer(upper_nu_maximum, self.gamma)))
         return (lower_minimum, lower_maximum, upper_minimum, upper_maximum)
 
-    def _validate_surface_mach_ranges(
-        self, *, ideal_outlet_relative_flow_mach: float, outlet_metal_angle: float | None) -> None:
+    def _validate_surface_mach_ranges(self, *, ideal_outlet_relative_flow_mach: float,
+                                      outlet_metal_angle: float | None) -> None:
         """Raise a designer-facing error for infeasible surface Mach inputs.
 
         :param float ideal_outlet_relative_flow_mach: Trial ideal rotor-relative outlet Mach number.
@@ -933,7 +896,7 @@ class SupersonicRotorBlade:
         :raises ValueError: If either constant surface Mach lies outside the NASA TN D-4421 bounds.
         """
 
-        (lower_minimum, lower_maximum, upper_minimum, upper_maximum) = self._surface_mach_ranges(
+        lower_minimum, lower_maximum, upper_minimum, upper_maximum = self._surface_mach_ranges(
             ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach, outlet_metal_angle=outlet_metal_angle)
         tolerance = 1.0e-10
         angle_context = ("the inlet relative flow angle and some physical outlet metal angle"
@@ -964,21 +927,24 @@ class SupersonicRotorBlade:
         :raises DesignConvergenceError: If mixture gamma does not converge.
         """
 
-        gamma = float(initial_gamma)
-        for _ in range(100):
+        def static_state(gamma: float) -> tuple[float, float, FluidState]:
+            """Return the inlet static state implied by one heat-capacity-ratio trial."""
+
             temperature_factor = 1.0 + 0.5 * (gamma - 1.0) * self.ideal_inlet_absolute_flow_mach**2
             static_temperature = self.inlet_total_temperature / temperature_factor
             static_pressure = self.inlet_total_pressure / temperature_factor ** (gamma / (gamma - 1.0))
-            static_state = self.fluid.properties(static_temperature, static_pressure)
-            updated_gamma = float(static_state.gamma)
-            if abs(updated_gamma - gamma) <= 1.0e-12:
-                return static_temperature, static_pressure, static_state
-            gamma = updated_gamma
+            return static_temperature, static_pressure, self.fluid.properties(static_temperature, static_pressure)
 
-        raise DesignConvergenceError("mixture gamma did not converge at the inlet static state")
+        # Accelerate the self-consistency between the isentropic state and CoolProp gamma with SciPy.
+        try:
+            gamma = float(fixed_point(lambda value: static_state(value)[2].gamma, initial_gamma,
+                                      xtol=1.0e-12, maxiter=100))
+        except RuntimeError as error:
+            raise DesignConvergenceError("mixture gamma did not converge at the inlet static state") from error
+        return static_state(gamma)
 
     def _solve_inlet_static_reference_state_from_relative(
-        self, *, initial_gamma: float) -> tuple[float, float, FluidState]:
+            self, *, initial_gamma: float) -> tuple[float, float, FluidState]:
         """Find the inlet static state when the rotor-relative flow is supplied.
 
         Absolute stagnation temperature is retained as the thermodynamic reference. For each gamma trial, the
@@ -991,11 +957,13 @@ class SupersonicRotorBlade:
         :raises DesignConvergenceError: If the temperature root is nonphysical or mixture gamma does not converge.
         """
 
-        gamma = float(initial_gamma)
         gas_constant = self.fluid.specific_gas_constant
         relative_flow_mach = self.ideal_inlet_relative_flow_mach
         relative_flow_angle_rad = math.radians(self.ideal_inlet_relative_flow_angle)
-        for _ in range(100):
+
+        def static_state(gamma: float) -> tuple[float, float, FluidState]:
+            """Return the inlet static state implied by one heat-capacity-ratio trial."""
+
             gm = gamma - 1.0
             coefficient_a = 1.0 + 0.5 * gm * relative_flow_mach**2
             coefficient_b = (gm * relative_flow_mach * self.wheel_speed * math.sin(relative_flow_angle_rad)
@@ -1018,13 +986,15 @@ class SupersonicRotorBlade:
             absolute_flow_mach = math.hypot(absolute_axial_velocity, absolute_tangential_velocity) / sound_speed
             temperature_factor = 1.0 + 0.5 * gm * absolute_flow_mach**2
             static_pressure = self.inlet_total_pressure / temperature_factor ** (gamma / gm)
-            static_state = self.fluid.properties(static_temperature, static_pressure)
-            updated_gamma = float(static_state.gamma)
-            if abs(updated_gamma - gamma) <= 1.0e-12:
-                return static_temperature, static_pressure, static_state
-            gamma = updated_gamma
+            return static_temperature, static_pressure, self.fluid.properties(static_temperature, static_pressure)
 
-        raise DesignConvergenceError("mixture gamma did not converge at the inlet static state")
+        # The accelerated fixed point couples the velocity triangle, isentropic state, and CoolProp gamma.
+        try:
+            gamma = float(fixed_point(lambda value: static_state(value)[2].gamma, initial_gamma,
+                                      xtol=1.0e-12, maxiter=100))
+        except RuntimeError as error:
+            raise DesignConvergenceError("mixture gamma did not converge at the inlet static state") from error
+        return static_state(gamma)
 
     def _absolute_outlet_to_relative_angle(self, *, absolute_flow_angle: float, relative_flow_mach: float) -> float:
         """Return the relative direction represented by an absolute angle.
@@ -1064,8 +1034,8 @@ class SupersonicRotorBlade:
                 "angle outside the NASA TN D-4421 geometry range (-90, 0 degrees)")
         return relative_flow_angle
 
-    def _absolute_outlet_state_to_relative(
-        self, *, absolute_flow_mach: float, absolute_flow_angle: float) -> dict[str, float]:
+    def _absolute_outlet_state_to_relative(self, *, absolute_flow_mach: float,
+                                           absolute_flow_angle: float) -> dict[str, float]:
         """Transform a specified ideal absolute outlet state to the rotor.
 
         The input Mach fixes ``V/a`` but not the dimensional velocity because
@@ -1182,8 +1152,8 @@ class SupersonicRotorBlade:
                                          "surface-Mach interval at this outlet metal angle")
         return max(relative_flow_mach_candidates)
 
-    def _relative_flow_state_to_absolute(
-        self, *, relative_flow_mach: float, relative_flow_angle_rad: float) -> dict[str, float]:
+    def _relative_flow_state_to_absolute(self, *, relative_flow_mach: float,
+                                         relative_flow_angle_rad: float) -> dict[str, float]:
         """Transform one rotor-relative state to the fixed frame.
 
         :param float relative_flow_mach: Rotor-relative Mach number.
@@ -1239,18 +1209,14 @@ class SupersonicRotorBlade:
         chord = ideal.chord * sonic_radius
 
         inlet_relative_velocity = self.real_inlet_relative_flow_mach * self.passage_inlet_speed_of_sound
-        chord_reynolds_number = (
-            inlet_relative_velocity * chord / self.passage_inlet_static_fluid_state.kinematic_viscosity)
+        chord_reynolds_number = \
+            inlet_relative_velocity * chord / self.passage_inlet_static_fluid_state.kinematic_viscosity
         if not math.isfinite(chord_reynolds_number) or chord_reynolds_number <= 0.0:
             raise ValueError("calculated chord Reynolds number is not positive")
 
-        return _PhysicalScale(
-            total_pitch=total_pitch,
-            passage_pitch=passage_pitch,
-            leading_edge_thickness=leading_edge_thickness,
-            sonic_radius=sonic_radius,
-            chord=chord,
-            chord_reynolds_number=chord_reynolds_number)
+        return _PhysicalScale(total_pitch=total_pitch, passage_pitch=passage_pitch,
+                              leading_edge_thickness=leading_edge_thickness, sonic_radius=sonic_radius,
+                              chord=chord, chord_reynolds_number=chord_reynolds_number)
 
     def _evaluate(self, ideal_outlet_relative_flow_mach: float, outlet_metal_angle: float) -> _RotorEvaluation:
         """Evaluate one ideal relative outlet-flow Mach and metal-angle trial.
@@ -1271,8 +1237,7 @@ class SupersonicRotorBlade:
         if key in self._evaluation_cache:
             return self._evaluation_cache[key]
 
-        ideal = design_ideal_geometry(
-            real_inlet_relative_flow_mach=self.real_inlet_relative_flow_mach,
+        ideal = design_ideal_geometry(real_inlet_relative_flow_mach=self.real_inlet_relative_flow_mach,
             ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach,
             lower_surface_relative_flow_mach=self.lower_surface_relative_flow_mach,
             upper_surface_relative_flow_mach=self.upper_surface_relative_flow_mach,
@@ -1288,8 +1253,14 @@ class SupersonicRotorBlade:
         # its ideal chord can change even though mean radius and blade count
         # remain fixed.
         physical_scale = self._physical_scale(ideal)
-        pressure_bl_marching = solve_boundary_layer(
-            surface=ideal.pressure_surface,
+
+        # The BL equations use thicknesses normalized by the trial chord. Convert the optional dimensional inlet
+        # thicknesses once so both surfaces start from exactly the same specified state.
+        initial_displacement_ratio = (None if self.initial_turbulent_displacement_thickness is None
+                                      else self.initial_turbulent_displacement_thickness / physical_scale.chord)
+        initial_momentum_ratio = (None if self.initial_turbulent_momentum_thickness is None
+                                  else self.initial_turbulent_momentum_thickness / physical_scale.chord)
+        pressure_bl_marching = solve_boundary_layer(surface=ideal.pressure_surface,
             chord=ideal.chord,
             inlet_edge_flow_mach=self.real_inlet_relative_flow_mach,
             chord_reynolds_number=physical_scale.chord_reynolds_number,
@@ -1298,17 +1269,10 @@ class SupersonicRotorBlade:
             inlet_total_temperature=self.relative_inlet_total_temperature,
             inlet_total_pressure=self.relative_inlet_total_pressure,
             mode=self.boundary_layer_mode,
-            initial_turbulent_displacement_thickness_over_chord=(
-                None
-                if self.initial_turbulent_displacement_thickness is None
-                else self.initial_turbulent_displacement_thickness / physical_scale.chord),
-            initial_turbulent_momentum_thickness_over_chord=(
-                None
-                if self.initial_turbulent_momentum_thickness is None
-                else self.initial_turbulent_momentum_thickness / physical_scale.chord),
+            initial_turbulent_displacement_thickness_over_chord=initial_displacement_ratio,
+            initial_turbulent_momentum_thickness_over_chord=initial_momentum_ratio,
             laminar_correlation_limit=0.50)
-        suction_bl_marching = solve_boundary_layer(
-            surface=ideal.suction_surface,
+        suction_bl_marching = solve_boundary_layer(surface=ideal.suction_surface,
             chord=ideal.chord,
             inlet_edge_flow_mach=self.real_inlet_relative_flow_mach,
             chord_reynolds_number=physical_scale.chord_reynolds_number,
@@ -1317,14 +1281,8 @@ class SupersonicRotorBlade:
             inlet_total_temperature=self.relative_inlet_total_temperature,
             inlet_total_pressure=self.relative_inlet_total_pressure,
             mode=self.boundary_layer_mode,
-            initial_turbulent_displacement_thickness_over_chord=(
-                None
-                if self.initial_turbulent_displacement_thickness is None
-                else self.initial_turbulent_displacement_thickness / physical_scale.chord),
-            initial_turbulent_momentum_thickness_over_chord=(
-                None
-                if self.initial_turbulent_momentum_thickness is None
-                else self.initial_turbulent_momentum_thickness / physical_scale.chord),
+            initial_turbulent_displacement_thickness_over_chord=initial_displacement_ratio,
+            initial_turbulent_momentum_thickness_over_chord=initial_momentum_ratio,
             laminar_correlation_limit=0.50)
 
         pressure_bl = pressure_bl_marching
@@ -1343,17 +1301,14 @@ class SupersonicRotorBlade:
         else:
             trailing_edge_thickness = max(0.0, leading_edge_thickness - trailing_edge_vertical_boundary_layer_height)
         pitch_residual = corrected.outlet_pitch - corrected.inlet_pitch
-        mixing = self._aftermixing(
-            ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach,
+        mixing = self._aftermixing(ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach,
             ideal_outlet_relative_flow_angle=outlet_metal_angle,
             ideal=ideal,
             corrected=corrected,
             pressure_bl=pressure_bl,
             suction_bl=suction_bl,
             trailing_edge_thickness=trailing_edge_thickness)
-        result = _RotorEvaluation(
-            ideal=ideal,
-            corrected=corrected,
+        result = _RotorEvaluation(ideal=ideal, corrected=corrected,
             pressure_boundary_layer=pressure_bl,
             suction_boundary_layer=suction_bl,
             pressure_boundary_layer_marching=pressure_bl_marching,
@@ -1367,8 +1322,8 @@ class SupersonicRotorBlade:
         return result
 
     @staticmethod
-    def _correct_shape(
-        ideal: BladeShape, pressure_bl: BoundaryLayerResult, suction_bl: BoundaryLayerResult) -> BladeShape:
+    def _correct_shape(ideal: BladeShape, pressure_bl: BoundaryLayerResult,
+                       suction_bl: BoundaryLayerResult) -> BladeShape:
         """Offset both MOC surfaces by the calculated displacement thickness.
 
         The BL solver reports a thickness normal to the local flow direction.
@@ -1387,13 +1342,11 @@ class SupersonicRotorBlade:
         suction_offset = suction_bl.displacement_thickness_over_chord * ideal.chord
         pressure_cosine = np.maximum(np.abs(np.cos(np.radians(ideal.pressure_surface.metal_angle))), 1.0e-6)
         suction_cosine = np.maximum(np.abs(np.cos(np.radians(ideal.suction_surface.metal_angle))), 1.0e-6)
-        pressure = SurfaceCoordinates(
-            x=ideal.pressure_surface.x.copy(),
+        pressure = SurfaceCoordinates(x=ideal.pressure_surface.x.copy(),
             y=ideal.pressure_surface.y + np.abs(pressure_offset / pressure_cosine),
             relative_flow_mach=ideal.pressure_surface.relative_flow_mach.copy(),
             metal_angle=ideal.pressure_surface.metal_angle.copy())
-        suction = SurfaceCoordinates(
-            x=ideal.suction_surface.x.copy(),
+        suction = SurfaceCoordinates(x=ideal.suction_surface.x.copy(),
             y=ideal.suction_surface.y - np.abs(suction_offset / suction_cosine),
             relative_flow_mach=ideal.suction_surface.relative_flow_mach.copy(),
             metal_angle=ideal.suction_surface.metal_angle.copy())
@@ -1401,10 +1354,10 @@ class SupersonicRotorBlade:
         inlet_metal_angle_rad = math.radians(float(ideal.suction_surface.metal_angle[0]))
         # Tangent arrays store magnitudes; the outlet direction is negative.
         outlet_metal_angle_rad = math.radians(-abs(float(ideal.suction_surface.metal_angle[-1])))
-        inlet_pitch = pressure.y[0] - (suction.y[0]
-            + math.tan(inlet_metal_angle_rad) * (pressure.x[0] - suction.x[0]))
-        outlet_pitch = pressure.y[-1] - (
-            suction.y[-1] + math.tan(outlet_metal_angle_rad) * (pressure.x[-1] - suction.x[-1]))
+        inlet_pitch = pressure.y[0] - (suction.y[0] + math.tan(inlet_metal_angle_rad)
+                                       * (pressure.x[0] - suction.x[0]))
+        outlet_pitch = pressure.y[-1] - (suction.y[-1] + math.tan(outlet_metal_angle_rad)
+                                         * (pressure.x[-1] - suction.x[-1]))
         return BladeShape(pressure_surface=pressure,
                           suction_surface=suction,
                           chord=ideal.chord,
@@ -1413,13 +1366,13 @@ class SupersonicRotorBlade:
                           max_flow_turning_increment=ideal.max_flow_turning_increment,
                           coordinate_scale=ideal.coordinate_scale)
 
-    def _solve_outlet_metal_angle_for_pitch_closure(
-        self, *, initial_outlet_metal_angle: float, ideal_outlet_relative_flow_mach: float) -> float:
+    def _solve_outlet_metal_angle_for_pitch_closure(self, *, initial_outlet_metal_angle: float,
+                                                    ideal_outlet_relative_flow_mach: float) -> float:
         """Reproduce the NASA TM X-2434 ``BETAT`` pitch-closure iteration.
 
         The first unbracketed update comes from the NASA TM X-2434 continuity
         relation with outlet displacement blockage. Once trials exist on
-        both sides of equal pitch, the legacy arithmetic bisection is used.
+        both sides of equal pitch, SciPy's Brent scheme refines the angle.
         NASA TM X-2434 uses a tolerance of 0.0001 physical length unit. This
         API applies a tighter SI tolerance of 0.000001 m.
 
@@ -1435,36 +1388,47 @@ class SupersonicRotorBlade:
         angle_below_target: float | None = None
         inlet_mass_flow = float(mass_flow_parameter(self.real_inlet_relative_flow_mach, self.gamma))
         outlet_mass_flow = float(mass_flow_parameter(ideal_outlet_relative_flow_mach, self.gamma))
+        evaluation_count = 0
+        evaluation: _RotorEvaluation | None = None
 
-        for iteration in range(50):
+        def pitch_residual(angle: float) -> float:
+            """Return corrected outlet pitch minus ideal inlet pitch for one angle trial."""
+
+            nonlocal evaluation_count, evaluation
             self._validate_surface_mach_ranges(
-                ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach, outlet_metal_angle=outlet_metal_angle)
-            evaluation = self._evaluate(ideal_outlet_relative_flow_mach, outlet_metal_angle)
-            pitch_residual = evaluation.corrected.outlet_pitch - evaluation.ideal.inlet_pitch
+                ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach, outlet_metal_angle=angle)
+            evaluation = self._evaluate(ideal_outlet_relative_flow_mach, angle)
+            evaluation_count += 1
+            return evaluation.corrected.outlet_pitch - evaluation.ideal.inlet_pitch
+
+        # Use the NASA continuity update only to discover the second side of the physical pitch-closure bracket.
+        for _ in range(50):
+            residual = pitch_residual(outlet_metal_angle)
             physical_scale = self._physical_scale(evaluation.ideal)
             pitch_tolerance = 1.0e-6 * evaluation.ideal.chord / physical_scale.chord
-            if abs(pitch_residual) <= pitch_tolerance:
-                self.pitch_closure_iteration_count = iteration + 1
+            if abs(residual) <= pitch_tolerance:
+                self.pitch_closure_iteration_count = evaluation_count
                 return outlet_metal_angle
 
-            if pitch_residual >= 0.0:
+            if residual >= 0.0:
                 angle_above_target = outlet_metal_angle
             else:
                 angle_below_target = outlet_metal_angle
 
             if angle_above_target is not None and angle_below_target is not None:
-                candidate = 0.5 * (angle_above_target + angle_below_target)
-            else:
-                total_displacement = (evaluation.pressure_boundary_layer.displacement_thickness_over_chord[-1]
-                                      + evaluation.suction_boundary_layer.displacement_thickness_over_chord[-1])\
-                                     * evaluation.ideal.chord
-                cosine_argument = (
-                    math.cos(math.radians(self.real_inlet_relative_flow_angle)) * inlet_mass_flow / outlet_mass_flow
-                    + total_displacement / evaluation.ideal.inlet_pitch)
-                if not -1.0 <= cosine_argument <= 1.0:
-                    raise DesignConvergenceError(
-                        "legacy pitch closure produced no physical outlet angle from the continuity update")
-                candidate = -math.degrees(math.acos(cosine_argument))
+                break
+
+            # The continuity update uses the combined pressure- and suction-side exit blockage.
+            pressure_displacement = evaluation.pressure_boundary_layer.displacement_thickness_over_chord[-1]
+            suction_displacement = evaluation.suction_boundary_layer.displacement_thickness_over_chord[-1]
+            total_displacement = (pressure_displacement + suction_displacement) * evaluation.ideal.chord
+            cosine_argument = math.cos(math.radians(self.real_inlet_relative_flow_angle)) \
+                              * inlet_mass_flow / outlet_mass_flow \
+                              + total_displacement / evaluation.ideal.inlet_pitch
+            if not -1.0 <= cosine_argument <= 1.0:
+                raise DesignConvergenceError(
+                    "legacy pitch closure produced no physical outlet angle from the continuity update")
+            candidate = -math.degrees(math.acos(cosine_argument))
 
             if not -90.0 < candidate < 0.0:
                 raise DesignConvergenceError(
@@ -1472,11 +1436,26 @@ class SupersonicRotorBlade:
             if abs(candidate - outlet_metal_angle) <= 1.0e-12:
                 raise DesignConvergenceError("legacy pitch closure stagnated before equal spacing")
             outlet_metal_angle = candidate
+        else:
+            raise DesignConvergenceError("pitch closure could not bracket equal spacing within 50 evaluations")
 
-        raise DesignConvergenceError("legacy pitch closure did not converge within 50 iterations")
+        lower_angle, upper_angle = sorted((angle_above_target, angle_below_target))
+        try:
+            outlet_metal_angle = brentq(pitch_residual, lower_angle, upper_angle, xtol=1.0e-12,
+                                        rtol=1.0e-14, maxiter=50)
+        except (RuntimeError, ValueError) as error:
+            raise DesignConvergenceError("pitch closure did not converge within the physical angle bracket") from error
 
-    def _flow_residual_for_outlet_metal_angle(
-        self, outlet_metal_angle: float, *,
+        residual = pitch_residual(outlet_metal_angle)
+        physical_scale = self._physical_scale(evaluation.ideal)
+        pitch_tolerance = 1.0e-6 * evaluation.ideal.chord / physical_scale.chord
+        if abs(residual) > pitch_tolerance:
+            raise DesignConvergenceError(
+                "pitch closure angle converged without satisfying the physical pitch tolerance")
+        self.pitch_closure_iteration_count = evaluation_count
+        return outlet_metal_angle
+
+    def _flow_residual_for_outlet_metal_angle(self, outlet_metal_angle: float, *,
         ideal_outlet_relative_flow_mach: float | None = None) -> float:
         """Return selected mixed-flow angle minus the requested angle.
 
@@ -1500,7 +1479,7 @@ class SupersonicRotorBlade:
         return selected_angle - requested_angle
 
     def _solve_outlet_metal_angle_for_target_flow(
-        self, *, ideal_outlet_relative_flow_mach: float | None = None) -> float:
+            self, *, ideal_outlet_relative_flow_mach: float | None = None) -> float:
         """Find the metal angle that matches the requested mixed outlet direction.
 
         SciPy's bounded nonlinear least-squares solver starts from the
@@ -1525,17 +1504,10 @@ class SupersonicRotorBlade:
 
         initial = np.asarray([float(np.clip(self.requested_outlet_relative_flow_angle, -88.5, -1.5))], dtype=float)
         try:
-            solution = least_squares(scaled_residual,
-                                     initial,
-                                     bounds=([-88.5], [-1.5]),
-                                     diff_step=5.0e-3,
-                                     xtol=1.0e-10,
-                                     ftol=1.0e-10,
-                                     gtol=1.0e-10,
-                                     max_nfev=60)
+            solution = least_squares(scaled_residual, initial, bounds=([-88.5], [-1.5]), diff_step=5.0e-3,
+                                     xtol=1.0e-10, ftol=1.0e-10, gtol=1.0e-10, max_nfev=60)
             outlet_metal_angle = float(solution.x[0])
-            final_residual = self._flow_residual_for_outlet_metal_angle(
-                outlet_metal_angle,
+            final_residual = self._flow_residual_for_outlet_metal_angle(outlet_metal_angle,
                 ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach)
         except (GeometryError, BoundaryLayerError, DesignConvergenceError, ValueError, OverflowError) as error:
             raise DesignConvergenceError("rotor outlet flow-angle solve encountered an infeasible trial") from error
@@ -1573,8 +1545,7 @@ class SupersonicRotorBlade:
         # a physically informed initial trial. BL mixing corrections are normally
         # small enough for this to lie in the basin of the coupled solution.
         if frame == "absolute":
-            initial_state = self._absolute_outlet_state_to_relative(
-                absolute_flow_mach=target_real_outlet_flow_mach,
+            initial_state = self._absolute_outlet_state_to_relative(absolute_flow_mach=target_real_outlet_flow_mach,
                 absolute_flow_angle=target_real_outlet_flow_angle)
             initial_outlet_metal_angle = initial_state["relative_flow_angle"]
             initial_ideal_outlet_relative_flow_mach = initial_state["relative_flow_mach"]
@@ -1582,9 +1553,9 @@ class SupersonicRotorBlade:
             initial_outlet_metal_angle = target_real_outlet_flow_angle
             initial_ideal_outlet_relative_flow_mach = target_real_outlet_flow_mach
         variables = np.asarray([min(max(initial_outlet_metal_angle, -88.5), -1.5),
-                                min(max(initial_ideal_outlet_relative_flow_mach, lower_ideal_outlet_relative_flow_mach),
-                                    upper_ideal_outlet_relative_flow_mach)],
-            dtype=float)
+                                min(max(initial_ideal_outlet_relative_flow_mach,
+                                        lower_ideal_outlet_relative_flow_mach),
+                                    upper_ideal_outlet_relative_flow_mach)], dtype=float)
 
         def residual(values: np.ndarray) -> np.ndarray:
             """Evaluate angle and Mach residuals for one solver trial.
@@ -1596,13 +1567,13 @@ class SupersonicRotorBlade:
 
             outlet_metal_angle = float(values[0])
             ideal_outlet_relative_flow_mach = float(values[1])
-            _, selected = self._select_mixing_result(
-                self._evaluate(ideal_outlet_relative_flow_mach, outlet_metal_angle).mixing)
+            evaluation = self._evaluate(ideal_outlet_relative_flow_mach, outlet_metal_angle)
+            _, selected = self._select_mixing_result(evaluation.mixing)
             if not bool(selected["available"]):
                 raise DesignConvergenceError("selected aftermixing solution is unavailable")
-            result = np.asarray(
-                [float(selected[f"real_outlet_{frame}_flow_angle"]) - target_real_outlet_flow_angle,
-                    float(selected[f"real_outlet_{frame}_flow_mach"]) - target_real_outlet_flow_mach], dtype=float)
+            result = np.asarray([
+                float(selected[f"real_outlet_{frame}_flow_angle"]) - target_real_outlet_flow_angle,
+                float(selected[f"real_outlet_{frame}_flow_mach"]) - target_real_outlet_flow_mach], dtype=float)
             if not np.all(np.isfinite(result)):
                 raise DesignConvergenceError("selected aftermixing solution is not physical")
             return result
@@ -1617,34 +1588,24 @@ class SupersonicRotorBlade:
             return result / np.asarray([angle_tolerance, mach_tolerance], dtype=float)
 
         try:
-            solution = least_squares(
-                scaled_residual,
-                variables,
-                bounds=([-88.5, lower_ideal_outlet_relative_flow_mach],
-                        [-1.5, upper_ideal_outlet_relative_flow_mach]),
-                diff_step=5.0e-3,
-                x_scale=np.asarray([10.0, 0.5], dtype=float),
-                xtol=1.0e-10,
-                ftol=1.0e-10,
-                gtol=1.0e-10,
-                max_nfev=100)
+            solution = least_squares(scaled_residual, variables,
+                                     bounds=([-88.5, lower_ideal_outlet_relative_flow_mach],
+                                             [-1.5, upper_ideal_outlet_relative_flow_mach]),
+                                     diff_step=5.0e-3, x_scale=np.asarray([10.0, 0.5], dtype=float),
+                                     xtol=1.0e-10, ftol=1.0e-10, gtol=1.0e-10, max_nfev=100)
             final_residual = residual(solution.x)
         except (GeometryError, BoundaryLayerError, DesignConvergenceError, ValueError, OverflowError) as error:
             raise DesignConvergenceError("coupled rotor outlet solve encountered an infeasible trial; "
                                          "adjust surface Mach numbers or the requested outlet state") from error
-        if (solution.success
-            and abs(float(final_residual[0])) <= angle_tolerance
-            and abs(float(final_residual[1])) <= mach_tolerance):
+        if (solution.success and abs(float(final_residual[0])) <= angle_tolerance
+                and abs(float(final_residual[1])) <= mach_tolerance):
             return float(solution.x[0]), float(solution.x[1])
         raise DesignConvergenceError(
             "coupled outlet angle/Mach solve did not converge; final "
             f"{frame} angle residual={final_residual[0]:.6g} deg and "
             f"Mach residual={final_residual[1]:.6g}")
 
-    def _aftermixing(
-        self,
-        *,
-        ideal_outlet_relative_flow_mach: float,
+    def _aftermixing(self, *, ideal_outlet_relative_flow_mach: float,
         ideal_outlet_relative_flow_angle: float,
         ideal: BladeShape,
         corrected: BladeShape,
@@ -1718,8 +1679,7 @@ class SupersonicRotorBlade:
                 continue
             real_outlet_relative_flow_mach = math.sqrt((2.0 / gp * total_velocity_ratio**2) / denominator)
             real_outlet_relative_flow_angle_rad = math.atan2(d_value, axial_velocity_ratio)
-            mixed_state = self._relative_flow_state_to_absolute(
-                relative_flow_mach=real_outlet_relative_flow_mach,
+            mixed_state = self._relative_flow_state_to_absolute(relative_flow_mach=real_outlet_relative_flow_mach,
                 relative_flow_angle_rad=real_outlet_relative_flow_angle_rad)
             results[name] = {
                 "available": True,
@@ -1730,8 +1690,7 @@ class SupersonicRotorBlade:
                 "real_outlet_absolute_flow_angle": mixed_state["absolute_flow_angle"],
                 "real_outlet_relative_flow_mach": mixed_state["relative_flow_mach"],
                 "real_outlet_relative_axial_flow_mach": mixed_state["relative_axial_flow_mach"],
-                "real_outlet_relative_flow_angle": mixed_state["relative_flow_angle"],
-            }
+                "real_outlet_relative_flow_angle": mixed_state["relative_flow_angle"]}
         return results
 
     def _assemble_cad_profile(self, shape: BladeShape) -> tuple[np.ndarray, np.ndarray]:
@@ -1793,8 +1752,7 @@ class SupersonicRotorBlade:
         :rtype: DimensionalBladeShapes
         """
 
-        result = DimensionalBladeShapes(
-            mean_radius=self.mean_radius,
+        result = DimensionalBladeShapes(mean_radius=self.mean_radius,
             blade_count=self.blade_count,
             sonic_radius_scale=self.sonic_radius_scale,
             uncorrected=self.uncorrected_shape.scaled(self.sonic_radius_scale, "dimensional"),
@@ -1802,10 +1760,7 @@ class SupersonicRotorBlade:
         self.dimensional_shapes = result
         return result
 
-    def plot(
-        self,
-        *,
-        dimensional: bool = False,
+    def plot(self, *, dimensional: bool = False,
         corrected: bool = True,
         show_two_blades: bool = True,
         ax=None,
@@ -1897,8 +1852,7 @@ class SupersonicRotorBlade:
                 # central passage boundary.
                 translation_x = shape.pressure_surface.x[0] - shape.suction_surface.x[0]
                 translation_y = shape.pressure_surface.y[0] - shape.suction_surface.y[0]
-                surfaces = (
-                    (shape.suction_surface, translation_x, translation_y + leading_edge_thickness),
+                surfaces = ((shape.suction_surface, translation_x, translation_y + leading_edge_thickness),
                     (shape.pressure_surface, 0.0, 0.0),
                     (shape.suction_surface, 0.0, 0.0),
                     (shape.pressure_surface, -translation_x, -translation_y - leading_edge_thickness))
@@ -1906,8 +1860,7 @@ class SupersonicRotorBlade:
                 # Retain the concise passage-only view when requested.
                 surfaces = ((shape.pressure_surface, 0.0, 0.0), (shape.suction_surface, 0.0, 0.0))
             for index, (surface, x_offset, y_offset) in enumerate(surfaces):
-                ax.plot(
-                    surface.x + x_offset,
+                ax.plot(surface.x + x_offset,
                     surface.y + y_offset,
                     linestyle,
                     color=color,
@@ -1921,8 +1874,7 @@ class SupersonicRotorBlade:
                 for first_index, second_index in ((0, 1), (2, 3)):
                     first_surface, first_x_offset, first_y_offset = surfaces[first_index]
                     second_surface, second_x_offset, second_y_offset = surfaces[second_index]
-                    ax.plot(
-                        [first_surface.x[0] + first_x_offset, second_surface.x[0] + second_x_offset],
+                    ax.plot([first_surface.x[0] + first_x_offset, second_surface.x[0] + second_x_offset],
                         [first_surface.y[0] + first_y_offset, second_surface.y[0] + second_y_offset],
                         linestyle,
                         color=color,
@@ -1935,8 +1887,7 @@ class SupersonicRotorBlade:
                 for first_index, second_index in ((0, 1), (2, 3)):
                     first_surface, first_x_offset, first_y_offset = surfaces[first_index]
                     second_surface, second_x_offset, second_y_offset = surfaces[second_index]
-                    ax.plot(
-                        [first_surface.x[-1] + first_x_offset, second_surface.x[-1] + second_x_offset],
+                    ax.plot([first_surface.x[-1] + first_x_offset, second_surface.x[-1] + second_x_offset],
                         [first_surface.y[-1] + first_y_offset, second_surface.y[-1] + second_y_offset],
                         linestyle,
                         color=color,

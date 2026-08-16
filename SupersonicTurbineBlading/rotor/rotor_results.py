@@ -89,14 +89,13 @@ class BladeShape:
         :rtype: BladeShape
         """
 
-        return BladeShape(
-            pressure_surface=self.pressure_surface.scaled(factor),
-            suction_surface=self.suction_surface.scaled(factor),
-            chord=self.chord * factor,
-            inlet_pitch=self.inlet_pitch * factor,
-            outlet_pitch=self.outlet_pitch * factor,
-            max_flow_turning_increment=self.max_flow_turning_increment,
-            coordinate_scale=scale_name)
+        return BladeShape(pressure_surface=self.pressure_surface.scaled(factor),
+                          suction_surface=self.suction_surface.scaled(factor),
+                          chord=self.chord * factor,
+                          inlet_pitch=self.inlet_pitch * factor,
+                          outlet_pitch=self.outlet_pitch * factor,
+                          max_flow_turning_increment=self.max_flow_turning_increment,
+                          coordinate_scale=scale_name)
 
 
 @dataclass(frozen=True)

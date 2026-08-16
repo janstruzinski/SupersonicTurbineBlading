@@ -203,12 +203,9 @@ def _select_transition(transition: _Transition, uniform_nu: float) -> _Transitio
     index = int(np.argmin(np.abs(transition.nu - uniform_nu)))
     if not math.isclose(float(transition.nu[index]), uniform_nu, rel_tol=0.0, abs_tol=2.0e-7):
         raise GeometryError("saved transition stations did not include the required endpoint")
-    return _Transition(
-        x=transition.x[index:].copy(),
-        y=transition.y[index:].copy(),
-        mach_star=transition.mach_star[index:].copy(),
-        eta=transition.eta[index:].copy(),
-        nu=transition.nu[index:].copy())
+    return _Transition(x=transition.x[index:].copy(), y=transition.y[index:].copy(),
+                       mach_star=transition.mach_star[index:].copy(), eta=transition.eta[index:].copy(),
+                       nu=transition.nu[index:].copy())
 
 
 def _rotate_lower(transition: _Transition, alpha: float, *, outlet: bool) -> _RotatedTransition:
@@ -266,9 +263,7 @@ def _inclusive_angles(start: float, end: float, number_of_nodes: int) -> np.ndar
     return np.linspace(start, end, number_of_nodes, dtype=float)
 
 
-def design_ideal_geometry(
-    *,
-    real_inlet_relative_flow_mach: float,
+def design_ideal_geometry(*, real_inlet_relative_flow_mach: float,
     ideal_outlet_relative_flow_mach: float,
     lower_surface_relative_flow_mach: float,
     upper_surface_relative_flow_mach: float,
@@ -361,8 +356,8 @@ def design_ideal_geometry(
     # The pressure surface contains inlet transition, constant-Mach arc, and reversed outlet transition.
     pressure_x = np.concatenate([lower_in.x, low_circle_x[1:-1], lower_out.x[::-1]])
     pressure_y = np.concatenate([lower_in.y, low_circle_y[1:-1], lower_out.y[::-1]])
-    pressure_ms = np.concatenate(
-        [lower_in.mach_star, np.full(max(0, len(lower_angles) - 2), ms_low), lower_out.mach_star[::-1]])
+    pressure_ms = np.concatenate([
+        lower_in.mach_star, np.full(max(0, len(lower_angles) - 2), ms_low), lower_out.mach_star[::-1]])
     pressure_eta = np.concatenate([lower_in.eta, np.abs(lower_angles[1:-1]), lower_out.eta[::-1]])
 
     if lower_in.x[0] > upper_in.x[0] + 1.0e-12:
@@ -378,24 +373,17 @@ def design_ideal_geometry(
     outlet_straight_x = np.linspace(upper_out.x[0], lower_out.x[0], 11)
     outlet_straight_y = upper_out.y[0] + math.tan(outlet_metal_angle_rad) * (outlet_straight_x - upper_out.x[0])
 
-    suction_x = np.concatenate(
-        [inlet_straight_x[:-1], upper_in.x, up_circle_x[1:-1], upper_out.x[::-1], outlet_straight_x[1:]])
-    suction_y = np.concatenate(
-        [inlet_straight_y[:-1], upper_in.y, up_circle_y[1:-1], upper_out.y[::-1], outlet_straight_y[1:]])
-    suction_ms = np.concatenate(
-        [
-            np.full(10, critical_velocity_ratio(real_inlet_relative_flow_mach, gamma)),
-            upper_in.mach_star,
-            np.full(max(0, len(upper_angles) - 2), ms_up),
-            upper_out.mach_star[::-1],
-            np.full(10, critical_velocity_ratio(ideal_outlet_relative_flow_mach, gamma))])
-    suction_eta = np.concatenate(
-        [
-            np.full(10, abs(inlet_metal_angle_rad)),
-            upper_in.eta,
-            np.abs(upper_angles[1:-1]),
-            upper_out.eta[::-1],
-            np.full(10, abs(outlet_metal_angle_rad))])
+    suction_x = np.concatenate([
+        inlet_straight_x[:-1], upper_in.x, up_circle_x[1:-1], upper_out.x[::-1], outlet_straight_x[1:]])
+    suction_y = np.concatenate([
+        inlet_straight_y[:-1], upper_in.y, up_circle_y[1:-1], upper_out.y[::-1], outlet_straight_y[1:]])
+    suction_ms = np.concatenate([
+        np.full(10, critical_velocity_ratio(real_inlet_relative_flow_mach, gamma)), upper_in.mach_star,
+        np.full(max(0, len(upper_angles) - 2), ms_up), upper_out.mach_star[::-1],
+        np.full(10, critical_velocity_ratio(ideal_outlet_relative_flow_mach, gamma))])
+    suction_eta = np.concatenate([
+        np.full(10, abs(inlet_metal_angle_rad)), upper_in.eta, np.abs(upper_angles[1:-1]),
+        upper_out.eta[::-1], np.full(10, abs(outlet_metal_angle_rad))])
 
     chord = math.hypot(float(lower_out.x[0] - lower_in.x[0]), float(lower_out.y[0] - lower_in.y[0]))
     if chord <= 0.0:
@@ -416,26 +404,17 @@ def design_ideal_geometry(
         keep = np.ones(len(x), dtype=bool)
         if len(x) > 1:
             keep[1:] = np.hypot(np.diff(x), np.diff(y)) > 1.0e-12
-        return SurfaceCoordinates(
-            x=np.asarray(x[keep], dtype=float),
-            y=np.asarray(y[keep], dtype=float),
-            relative_flow_mach=np.asarray(mach_from_critical_velocity_ratio(mach_star[keep], gamma), dtype=float),
-            metal_angle=np.asarray(np.degrees(eta[keep]), dtype=float))
+        return SurfaceCoordinates(x=np.asarray(x[keep], dtype=float), y=np.asarray(y[keep], dtype=float),
+                                  relative_flow_mach=np.asarray(mach_from_critical_velocity_ratio(
+                                      mach_star[keep], gamma), dtype=float),
+                                  metal_angle=np.asarray(np.degrees(eta[keep]), dtype=float))
 
-    turning_spans = (
-        nu_in - nu_low,
-        nu_out - nu_low,
-        nu_up - nu_in,
-        nu_up - nu_out,
-        abs(alpha_lower_out - alpha_lower_in),
-        abs(alpha_upper_out - alpha_upper_in))
+    turning_spans = (nu_in - nu_low, nu_out - nu_low, nu_up - nu_in, nu_up - nu_out,
+                     abs(alpha_lower_out - alpha_lower_in), abs(alpha_upper_out - alpha_upper_in))
     max_flow_turning_increment = math.degrees(max(turning_spans) / (number_of_nodes - 1))
 
-    return BladeShape(
-        pressure_surface=make_surface(pressure_x, pressure_y, pressure_ms, pressure_eta),
-        suction_surface=make_surface(suction_x, suction_y, suction_ms, suction_eta),
-        chord=chord,
-        inlet_pitch=float(inlet_pitch),
-        outlet_pitch=float(outlet_pitch),
-        max_flow_turning_increment=max_flow_turning_increment,
-        coordinate_scale="vortex sonic radius r*")
+    return BladeShape(pressure_surface=make_surface(pressure_x, pressure_y, pressure_ms, pressure_eta),
+                      suction_surface=make_surface(suction_x, suction_y, suction_ms, suction_eta),
+                      chord=chord, inlet_pitch=float(inlet_pitch), outlet_pitch=float(outlet_pitch),
+                      max_flow_turning_increment=max_flow_turning_increment,
+                      coordinate_scale="vortex sonic radius r*")

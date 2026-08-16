@@ -756,8 +756,8 @@ The files in `stator/` have the following roles:
 `design_ideal_stator_nozzle(...)` builds the planar MOC contour and `design_conical_stator_nozzle(...)` builds the
 axisymmetric alternative. Both return an `IdealNozzleConstruction`, which contains a `NozzleShape`.
 `NozzleShape.pressure_surface` and `NozzleShape.suction_surface` contain the two walls.
-`NozzleShape.dimensionalize(...)` scales nozzle to the machine dimensions. Each stator `SurfaceCoordinates` object stores
-`absolute_flow_mach`, while `relative_flow_mach` is `None`. The `metal_angle` array is in degrees.
+`NozzleShape.dimensionalize(...)` scales nozzle to the machine dimensions. Each stator `SurfaceCoordinates` object
+stores `absolute_flow_mach`, while `relative_flow_mach` is `None`. The `metal_angle` array is in degrees.
 
 Additional nozzle design features of `stator_nozzle.py` are documented below.
 
@@ -790,9 +790,9 @@ local states.
 
 The laminar method applies the Cohen-Reshotko transformation and correlation tables to the momentum integral
 equation. It predicts neutral instability, transition and laminar separation. The turbulent method marches
-the two coupled Sasman-Cresci integral equations for transformed momentum thickness and form factor with a fourth-order
-Runge-Kutta scheme. At natural transition, or at laminar separation, the code follows the legacy `CTHET=1`
-choice: momentum thickness is conserved and the turbulent march starts immediately.
+the two coupled Sasman-Cresci integral equations for transformed momentum thickness and form factor with SciPy's
+adaptive RK45 Runge-Kutta scheme. At natural transition, or at laminar separation, the code follows the legacy
+`CTHET=1` choice: momentum thickness is conserved and the turbulent march starts immediately.
 
 Two inlet modes are available in both public classes:
 
@@ -822,7 +822,8 @@ The stator march starts at the sonic sharp throat. In natural-transition mode th
 in fully turbulent mode the two specified thicknesses are throat values.
 
 For the symmetric unrotated nozzle, the class performs one march along the upper wall. The pressure-side result is the
-boundary layer ending at the divergent-contour exit; the suction-side result continues along the downstream straight wall.
+boundary layer ending at the divergent-contour exit; the suction-side result continues along the downstream straight
+wall.
 This reproduces the code in NASA TM X-2343 and avoids two inconsistent solutions on what begins as the
 same ideal contour.
 
@@ -1068,8 +1069,7 @@ $$G^{\ast}_{\mathrm{out,corr}}-G^{\ast}_{\mathrm{in,ideal}}=0.$$
 
 This allows to keep the same leading and trailing edge thickness for the rotor blade when boundary layer correction is
 used. The first unbracketed update follows the legacy mass-continuity expression; once trial geometries exist on both
-sides of equal pitch, arithmetic bisection is used. The tolerance corresponds to $10^{-6}$ m in the physical blade
-scale.
+sides of equal pitch, SciPy's bracketed Brent scheme refines the solution.
 
 In this mode, the requested outlet angle in the selected input frame is only the initial estimate, and the final outlet
 direction will generally differ. Construction therefore emits a warning. Pitch closure is incompatible with

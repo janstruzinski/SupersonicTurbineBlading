@@ -82,7 +82,8 @@ def test_conical_nozzle_uses_nasa_area_mach_relation():
         2.0 / (gamma + 1.0) * (1.0 + 0.5 * (gamma - 1.0) * ideal_outlet_absolute_flow_mach**2)
     ) ** exponent / ideal_outlet_absolute_flow_mach
     expected_exit_diameter_ratio = math.sqrt(expected_area_ratio)
-    expected_divergent_length = 0.5 * (expected_exit_diameter_ratio - 1.0) / math.tan(math.radians(half_cone_metal_angle))
+    expected_divergent_length = (
+        0.5 * (expected_exit_diameter_ratio - 1.0) / math.tan(math.radians(half_cone_metal_angle)))
     expected_straight_length = expected_exit_diameter_ratio * math.tan(math.radians(outlet_metal_angle))
 
     assert math.isclose(
@@ -95,7 +96,8 @@ def test_conical_nozzle_uses_nasa_area_mach_relation():
     )
     assert math.isclose((shape.exit_opening / shape.throat_width) ** 2, expected_area_ratio, rel_tol=1.0e-14)
     assert math.isclose(shape.pressure_surface.x[-1], expected_divergent_length, rel_tol=1.0e-14)
-    assert math.isclose(shape.suction_surface.x[-1] - shape.pressure_surface.x[-1], expected_straight_length, rel_tol=1.0e-14)
+    assert math.isclose(shape.suction_surface.x[-1] - shape.pressure_surface.x[-1], expected_straight_length,
+                        rel_tol=1.0e-14)
     assert np.allclose(shape.suction_surface.y[50:], 0.5 * expected_exit_diameter_ratio)
     assert np.allclose(
         shape.pressure_surface.absolute_flow_mach,
@@ -290,11 +292,13 @@ def test_supersonic_axial_flow_automatically_uses_supersonic_mixing_solution():
     assert stator.ideal_outlet_absolute_axial_flow_mach >= 1.0
     assert stator.supersonic_mixing_available
     assert stator.mixing_solution == "supersonic"
-    assert stator.real_outlet_absolute_flow_mach == stator.mixing_results["supersonic"]["real_outlet_absolute_flow_mach"]
+    assert stator.real_outlet_absolute_flow_mach == \
+        stator.mixing_results["supersonic"]["real_outlet_absolute_flow_mach"]
 
 
 def test_stator_subsonic_mixing_solution_overrides_automatic_selection():
-    stator = make_stator(requested_outlet_absolute_flow_mach=2.0, requested_outlet_absolute_flow_angle=30.0, mixing_solution="subsonic")
+    stator = make_stator(requested_outlet_absolute_flow_mach=2.0, requested_outlet_absolute_flow_angle=30.0,
+                         mixing_solution="subsonic")
 
     assert stator.ideal_outlet_absolute_axial_flow_mach >= 1.0
     assert stator.supersonic_mixing_available
@@ -336,7 +340,8 @@ def test_trailing_edge_thickness_uses_nasa_tm_x_2343_afmix_blockage():
     gp = gamma + 1.0
     gm = gamma - 1.0
     angle = math.radians(finite.outlet_metal_angle)
-    velocity_ratio = math.sqrt((0.5 * gp * finite.ideal_outlet_absolute_flow_mach**2) / (1.0 + 0.5 * gm * finite.ideal_outlet_absolute_flow_mach**2))
+    velocity_ratio = math.sqrt((0.5 * gp * finite.ideal_outlet_absolute_flow_mach**2)
+                               / (1.0 + 0.5 * gm * finite.ideal_outlet_absolute_flow_mach**2))
     projected_spacing = finite.corrected_shape.spacing * math.cos(angle)
     pressure_displacement = (
         finite.pressure_boundary_layer.displacement_thickness_over_chord[-1] * finite.uncorrected_shape.chord
@@ -362,8 +367,10 @@ def test_trailing_edge_thickness_uses_nasa_tm_x_2343_afmix_blockage():
     total_velocity_ratio = math.hypot(d_value, axial_velocity_ratio)
     expected_mach = math.sqrt((2.0 / gp * total_velocity_ratio**2) / (1.0 - gm / gp * total_velocity_ratio**2))
     expected_angle = math.degrees(math.atan2(d_value, axial_velocity_ratio))
-    assert math.isclose(finite.mixing_results["subsonic"]["real_outlet_absolute_flow_mach"], expected_mach, rel_tol=1.0e-12)
-    assert math.isclose(finite.mixing_results["subsonic"]["real_outlet_absolute_flow_angle"], expected_angle, rel_tol=1.0e-12)
+    assert math.isclose(finite.mixing_results["subsonic"]["real_outlet_absolute_flow_mach"], expected_mach,
+                        rel_tol=1.0e-12)
+    assert math.isclose(finite.mixing_results["subsonic"]["real_outlet_absolute_flow_angle"], expected_angle,
+                        rel_tol=1.0e-12)
 
 
 def test_trailing_edge_thickness_must_be_nonnegative():
@@ -383,10 +390,12 @@ def test_iterated_outlet_metal_angle_matches_requested_real_flow_angle():
 
 
 def test_coupled_iteration_matches_real_outlet_absolute_flow_mach_and_angle():
-    stator = make_stator(requested_outlet_absolute_flow_mach=1.77, iterate_outlet_metal_angle=True, match_real_outlet_absolute_flow_mach=True)
+    stator = make_stator(requested_outlet_absolute_flow_mach=1.77, iterate_outlet_metal_angle=True,
+                         match_real_outlet_absolute_flow_mach=True)
     assert abs(stator.real_outlet_absolute_flow_angle - stator.requested_outlet_absolute_flow_angle) < 2.0e-3
     assert abs(stator.real_outlet_absolute_flow_mach - stator.requested_outlet_absolute_flow_mach) < 1.0e-4
-    assert not math.isclose(stator.ideal_outlet_absolute_flow_mach, stator.requested_outlet_absolute_flow_mach, rel_tol=1.0e-3)
+    assert not math.isclose(stator.ideal_outlet_absolute_flow_mach, stator.requested_outlet_absolute_flow_mach,
+                            rel_tol=1.0e-3)
     assert math.isclose(
         stator.ideal_outlet_absolute_axial_flow_mach,
         stator.ideal_outlet_absolute_flow_mach * math.cos(math.radians(stator.outlet_metal_angle)),
@@ -424,7 +433,8 @@ def test_coupled_conical_iteration_varies_ideal_absolute_flow_mach():
 
     assert abs(stator.real_outlet_absolute_flow_mach - stator.requested_outlet_absolute_flow_mach) < 1.0e-4
     assert abs(stator.real_outlet_absolute_flow_angle - stator.requested_outlet_absolute_flow_angle) < 2.0e-3
-    assert not math.isclose(stator.ideal_outlet_absolute_flow_mach, stator.requested_outlet_absolute_flow_mach, rel_tol=1.0e-3)
+    assert not math.isclose(stator.ideal_outlet_absolute_flow_mach, stator.requested_outlet_absolute_flow_mach,
+                            rel_tol=1.0e-3)
     assert math.isclose(stator.required_exit_area_ratio, expected_area_ratio, rel_tol=1.0e-13)
     assert math.isclose(
         (stator.uncorrected_shape.exit_opening / stator.uncorrected_shape.throat_width) ** 2,

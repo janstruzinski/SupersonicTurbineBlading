@@ -7,23 +7,14 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
-from scipy.optimize import least_squares
+from scipy.optimize import fixed_point, least_squares
 
-from ..boundary_layer.boundary_layer_solver import (
-    BoundaryLayerError,
-    BoundaryLayerMode,
-    solve_boundary_layer,
-)
+from ..boundary_layer.boundary_layer_solver import BoundaryLayerError, BoundaryLayerMode, solve_boundary_layer
 from ..common_results import BoundaryLayerResult, SurfaceCoordinates
 from ..fluid import Fluid, FluidState
 from ..gas_dynamics import isentropic_area_ratio
-from .stator_geometry import (
-    ContourMethod,
-    IdealNozzleConstruction,
-    StatorGeometryError,
-    design_conical_stator_nozzle,
-    design_ideal_stator_nozzle,
-)
+from .stator_geometry import (ContourMethod, IdealNozzleConstruction, StatorGeometryError,
+                              design_conical_stator_nozzle, design_ideal_stator_nozzle)
 from .stator_results import DimensionalNozzleShapes, NozzleShape
 
 MixingSolution = Literal["subsonic", "supersonic"]
@@ -106,11 +97,9 @@ def _surface(x: np.ndarray, y: np.ndarray, absolute_flow_mach: np.ndarray) -> Su
     absolute_flow_mach = np.asarray(absolute_flow_mach, dtype=float)
     if np.any(np.hypot(np.diff(x), np.diff(y)) <= 1.0e-12):
         raise BoundaryLayerError("boundary-layer correction created duplicate nozzle points")
-    return SurfaceCoordinates(
-        x=x,
-        y=y,
-        absolute_flow_mach=absolute_flow_mach,
-        metal_angle=np.asarray(np.degrees(np.arctan2(np.gradient(y), np.gradient(x))), dtype=float))
+    return SurfaceCoordinates(x=x, y=y, absolute_flow_mach=absolute_flow_mach,
+                              metal_angle=np.asarray(np.degrees(
+                                  np.arctan2(np.gradient(y), np.gradient(x))), dtype=float))
 
 
 def _slice_boundary_layer(result: BoundaryLayerResult, count: int) -> BoundaryLayerResult:
@@ -124,15 +113,15 @@ def _slice_boundary_layer(result: BoundaryLayerResult, count: int) -> BoundaryLa
 
     transition = result.transition_index
     separation = result.separation_index
-    return BoundaryLayerResult(
-        s_over_chord=result.s_over_chord[:count].copy(),
-        displacement_thickness_over_chord=(result.displacement_thickness_over_chord[:count].copy()),
-        momentum_thickness_over_chord=(result.momentum_thickness_over_chord[:count].copy()),
-        form_factor=result.form_factor[:count].copy(),
-        regime=result.regime[:count].copy(),
-        transition_index=(transition if transition is not None and transition < count else None),
-        separation_index=(separation if separation is not None and separation < count else None),
-        freestream_absolute_flow_mach=result.freestream_absolute_flow_mach[:count].copy())
+    return BoundaryLayerResult(s_over_chord=result.s_over_chord[:count].copy(),
+                               displacement_thickness_over_chord=
+                               result.displacement_thickness_over_chord[:count].copy(),
+                               momentum_thickness_over_chord=result.momentum_thickness_over_chord[:count].copy(),
+                               form_factor=result.form_factor[:count].copy(), regime=result.regime[:count].copy(),
+                               transition_index=(transition if transition is not None and transition < count else None),
+                               separation_index=(separation if separation is not None and separation < count else None),
+                               freestream_absolute_flow_mach=
+                               result.freestream_absolute_flow_mach[:count].copy())
 
 
 class SupersonicStatorNozzle:
@@ -212,10 +201,7 @@ class SupersonicStatorNozzle:
     remain the selected ideal and boundary-layer-corrected contours.
     """
 
-    def __init__(
-        self,
-        *,
-        requested_outlet_absolute_flow_mach: float,
+    def __init__(self, *, requested_outlet_absolute_flow_mach: float,
         requested_outlet_absolute_flow_angle: float,
         mass_flow_rate: float,
         nozzle_count: int,
@@ -247,8 +233,7 @@ class SupersonicStatorNozzle:
 
         # Validate the mode-dependent arguments before converting values. This
         # keeps MOC-only and conical-only input errors close to the user call.
-        self._validate_inputs(
-            requested_outlet_absolute_flow_mach=requested_outlet_absolute_flow_mach,
+        self._validate_inputs(requested_outlet_absolute_flow_mach=requested_outlet_absolute_flow_mach,
             requested_outlet_absolute_flow_angle=requested_outlet_absolute_flow_angle,
             mass_flow_rate=mass_flow_rate,
             nozzle_count=nozzle_count,
@@ -289,8 +274,8 @@ class SupersonicStatorNozzle:
 
         self.upstream_total_fluid_state = self.fluid.properties(self.upstream_total_temperature,
                                                                 self.upstream_total_pressure)
-        (self.throat_static_temperature, self.throat_static_pressure, self.throat_static_fluid_state) = (
-            self._solve_throat_static_reference_state(initial_gamma=self.upstream_total_fluid_state.gamma))
+        (self.throat_static_temperature, self.throat_static_pressure, self.throat_static_fluid_state) = \
+            self._solve_throat_static_reference_state(initial_gamma=self.upstream_total_fluid_state.gamma)
         self.gamma = float(self.throat_static_fluid_state.gamma)
         self.prandtl_number = float(self.throat_static_fluid_state.prandtl_number)
 
@@ -327,14 +312,13 @@ class SupersonicStatorNozzle:
 
         self._evaluation_cache: dict[tuple[float, float], _StatorEvaluation] = {}
         if self.match_real_outlet_absolute_flow_mach:
-            (outlet_metal_angle, ideal_outlet_absolute_flow_mach) = self._solve_outlet_metal_angle_and_flow_mach_targets()
+            outlet_metal_angle, ideal_outlet_absolute_flow_mach = \
+                self._solve_outlet_metal_angle_and_flow_mach_targets()
         else:
             ideal_outlet_absolute_flow_mach = self.requested_outlet_absolute_flow_mach
-            outlet_metal_angle = (
-                self._solve_outlet_metal_angle_for_target_flow(
-                    ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach)
-                if self.iterate_outlet_metal_angle
-                else self.requested_outlet_absolute_flow_angle)
+            outlet_metal_angle = (self._solve_outlet_metal_angle_for_target_flow(
+                ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach)
+                if self.iterate_outlet_metal_angle else self.requested_outlet_absolute_flow_angle)
         evaluation = self._evaluate(outlet_metal_angle, ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach)
 
         selected_solution, selected = self._select_mixing_result(evaluation.corrected_mixing)
@@ -382,8 +366,8 @@ class SupersonicStatorNozzle:
             self.conical_divergent_length = None
         self.physical_chord = evaluation.physical_chord
         self.chord_reynolds_number = evaluation.chord_reynolds_number
-        self.corrected_exit_displacement_thickness = (
-                evaluation.corrected_exit.displacement * self.coordinate_scale_length)
+        self.corrected_exit_displacement_thickness = \
+            evaluation.corrected_exit.displacement * self.coordinate_scale_length
         self.corrected_exit_momentum_thickness = evaluation.corrected_exit.momentum * self.coordinate_scale_length
 
         # The physical scale is known at initialization, unlike the rotor
@@ -498,24 +482,29 @@ class SupersonicStatorNozzle:
         :raises StatorDesignConvergenceError: If mixture gamma does not converge.
         """
 
-        gamma = float(initial_gamma)
-        for _ in range(100):
+        def static_state(gamma: float) -> tuple[float, float, FluidState]:
+            """Return the choked static state implied by one heat-capacity-ratio trial."""
+
             temperature_ratio = 2.0 / (gamma + 1.0)
             static_temperature = self.upstream_total_temperature * temperature_ratio
             static_pressure = self.upstream_total_pressure * temperature_ratio ** (gamma / (gamma - 1.0))
-            static_state = self.fluid.properties(static_temperature, static_pressure)
-            updated_gamma = float(static_state.gamma)
-            if abs(updated_gamma - gamma) <= 1.0e-12:
-                return static_temperature, static_pressure, static_state
-            gamma = updated_gamma
-        raise StatorDesignConvergenceError("mixture gamma did not converge at the choked throat state")
+            return static_temperature, static_pressure, self.fluid.properties(static_temperature, static_pressure)
+
+        # Accelerate the self-consistency between the choked state and CoolProp gamma with SciPy.
+        try:
+            gamma = float(fixed_point(lambda value: static_state(value)[2].gamma, initial_gamma,
+                                      xtol=1.0e-12, maxiter=100))
+        except RuntimeError as error:
+            raise StatorDesignConvergenceError("mixture gamma did not converge at the choked throat state") from error
+        return static_state(gamma)
 
     def _evaluate(self, outlet_metal_angle: float, *,
                   ideal_outlet_absolute_flow_mach: float | None = None) -> _StatorEvaluation:
         """Build one angle/Mach trial, including BL correction and aftermixing.
 
         :param float outlet_metal_angle: Trial outlet metal angle from the machine axis, degrees.
-        :param float | None ideal_outlet_absolute_flow_mach: Trial inviscid exit Mach, or the requested value when omitted.
+        :param float | None ideal_outlet_absolute_flow_mach: Trial inviscid exit Mach, or the requested value when
+            omitted.
         :return: Geometry, BL results, corrected exit, dimensional scale, and mixing solutions.
         :rtype: _StatorEvaluation
         """
@@ -532,8 +521,7 @@ class SupersonicStatorNozzle:
             return self._evaluation_cache[key]
 
         if self.contour_method == "moc":
-            construction = design_ideal_stator_nozzle(
-                ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
+            construction = design_ideal_stator_nozzle(ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
                 outlet_metal_angle=outlet_metal_angle,
                 number_of_nodes=self.number_of_nodes,
                 gamma=self.gamma)
@@ -542,8 +530,7 @@ class SupersonicStatorNozzle:
             # current ideal_outlet_absolute_flow_mach. The area ratio and cone length are
             # therefore rebuilt when Mach is varied to meet a mixed-Mach
             # target, rather than being frozen from the requested value.
-            construction = design_conical_stator_nozzle(
-                ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
+            construction = design_conical_stator_nozzle(ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
                 outlet_metal_angle=outlet_metal_angle,
                 half_cone_metal_angle=float(self.half_cone_metal_angle),
                 number_of_nodes=self.number_of_nodes,
@@ -554,13 +541,19 @@ class SupersonicStatorNozzle:
         throat_velocity = self.throat_static_fluid_state.speed_of_sound
         chord_reynolds_number = throat_velocity * physical_chord / self.throat_static_fluid_state.kinematic_viscosity
 
+        # The BL equations use thicknesses normalized by the physical trial chord. Convert the optional dimensional
+        # throat inputs once before applying the same starting state to the common wall march.
+        initial_displacement_ratio = (None if self.initial_turbulent_displacement_thickness is None
+                                      else self.initial_turbulent_displacement_thickness / physical_chord)
+        initial_momentum_ratio = (None if self.initial_turbulent_momentum_thickness is None
+                                  else self.initial_turbulent_momentum_thickness / physical_chord)
+
         # Both walls of the unrotated NASA TM X-1502 nozzle share the same symmetric
         # contour.  The original program marched one BL along the upper wall;
         # the pressure-side exit is an earlier station, while the suction side
         # continues over the fixed-node straight segment. Reusing one march here is
         # therefore more faithful than solving two independent BLs.
-        suction_boundary_layer = solve_boundary_layer(
-            surface=ideal.suction_surface,
+        suction_boundary_layer = solve_boundary_layer(surface=ideal.suction_surface,
             chord=ideal.chord,
             inlet_edge_flow_mach=1.0,
             chord_reynolds_number=chord_reynolds_number,
@@ -569,19 +562,14 @@ class SupersonicStatorNozzle:
             inlet_total_temperature=self.upstream_total_temperature,
             inlet_total_pressure=self.upstream_total_pressure,
             mode=self.boundary_layer_mode,
-            initial_turbulent_displacement_thickness_over_chord=(None
-                if self.initial_turbulent_displacement_thickness is None
-                else self.initial_turbulent_displacement_thickness / physical_chord),
-            initial_turbulent_momentum_thickness_over_chord=(None
-                if self.initial_turbulent_momentum_thickness is None
-                else self.initial_turbulent_momentum_thickness / physical_chord),
+            initial_turbulent_displacement_thickness_over_chord=initial_displacement_ratio,
+            initial_turbulent_momentum_thickness_over_chord=initial_momentum_ratio,
             laminar_correlation_limit=0.16)
 
         pressure_boundary_layer = _slice_boundary_layer(suction_boundary_layer, construction.pressure_point_count)
         pressure_boundary_layer_marching = pressure_boundary_layer
         suction_boundary_layer_marching = suction_boundary_layer
-        (corrected, corrected_exit) = self._correct_shape(
-            ideal=ideal,
+        corrected, corrected_exit = self._correct_shape(ideal=ideal,
             construction=construction,
             boundary_layer=suction_boundary_layer,
             outlet_metal_angle=outlet_metal_angle)
@@ -589,8 +577,7 @@ class SupersonicStatorNozzle:
         pressure_index = construction.pressure_point_count - 1
         displacement = suction_boundary_layer.displacement_thickness_over_chord * ideal.chord
         momentum = suction_boundary_layer.momentum_thickness_over_chord * ideal.chord
-        uncorrected_mixing = self._aftermixing(
-            ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
+        uncorrected_mixing = self._aftermixing(ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
             ideal_outlet_absolute_flow_angle=ideal_outlet_absolute_flow_angle,
             spacing=ideal.spacing,
             trailing_edge_thickness=self.trailing_edge_thickness_over_coordinate_scale,
@@ -598,8 +585,7 @@ class SupersonicStatorNozzle:
             suction_displacement=float(displacement[-1]),
             pressure_momentum=float(momentum[pressure_index]),
             suction_momentum=float(momentum[-1]))
-        corrected_mixing = self._aftermixing(
-            ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
+        corrected_mixing = self._aftermixing(ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
             ideal_outlet_absolute_flow_angle=ideal_outlet_absolute_flow_angle,
             spacing=corrected.spacing,
             trailing_edge_thickness=self.trailing_edge_thickness_over_coordinate_scale,
@@ -607,8 +593,7 @@ class SupersonicStatorNozzle:
             suction_displacement=corrected_exit.displacement,
             pressure_momentum=float(momentum[pressure_index]),
             suction_momentum=corrected_exit.momentum)
-        evaluation = _StatorEvaluation(
-            ideal_outlet_absolute_flow_mach=float(ideal_outlet_absolute_flow_mach),
+        evaluation = _StatorEvaluation(ideal_outlet_absolute_flow_mach=float(ideal_outlet_absolute_flow_mach),
             ideal_outlet_absolute_flow_angle=ideal_outlet_absolute_flow_angle,
             outlet_metal_angle=float(outlet_metal_angle),
             construction=construction,
@@ -627,9 +612,7 @@ class SupersonicStatorNozzle:
         return evaluation
 
     @staticmethod
-    def _correct_shape(
-        *,
-        ideal: NozzleShape,
+    def _correct_shape(*, ideal: NozzleShape,
         construction: IdealNozzleConstruction,
         boundary_layer: BoundaryLayerResult,
         outlet_metal_angle: float) -> tuple[NozzleShape, _CorrectedExit]:
@@ -708,25 +691,18 @@ class SupersonicStatorNozzle:
 
         corrected_spacing = (2.0 * (pressure_exit_y + displacement[pressure_index]) / math.cos(outlet_metal_angle_rad)
             + spacing_increment)
-        corrected = NozzleShape(
-            pressure_surface=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
-            suction_surface=_surface(suction_x, suction_y, suction_absolute_flow_mach),
-            chord=float(suction_x[-1]),
-            throat_width=(ideal.throat_width + 2.0 * displacement[0]),
-            exit_opening=2.0 * (pressure_exit_y + displacement[pressure_index]),
-            spacing=corrected_spacing,
-            coordinate_scale=ideal.coordinate_scale)
-        return corrected, _CorrectedExit(
-            displacement=float(displacement_2),
-            momentum=float(momentum_2),
-            first_extension=float(first_extension),
-            second_extension=float(second_extension),
-            spacing_increment=float(spacing_increment))
+        corrected = NozzleShape(pressure_surface=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
+                                suction_surface=_surface(suction_x, suction_y, suction_absolute_flow_mach),
+                                chord=float(suction_x[-1]),
+                                throat_width=ideal.throat_width + 2.0 * displacement[0],
+                                exit_opening=2.0 * (pressure_exit_y + displacement[pressure_index]),
+                                spacing=corrected_spacing, coordinate_scale=ideal.coordinate_scale)
+        return corrected, _CorrectedExit(displacement=float(displacement_2), momentum=float(momentum_2),
+                                         first_extension=float(first_extension),
+                                         second_extension=float(second_extension),
+                                         spacing_increment=float(spacing_increment))
 
-    def _aftermixing(
-        self,
-        *,
-        ideal_outlet_absolute_flow_mach: float,
+    def _aftermixing(self, *, ideal_outlet_absolute_flow_mach: float,
         ideal_outlet_absolute_flow_angle: float,
         spacing: float,
         trailing_edge_thickness: float,
@@ -812,9 +788,8 @@ class SupersonicStatorNozzle:
                 "trailing_edge_blockage_ratio": (trailing_edge_blockage_ratio)}
         return results
 
-    def _flow_residual_for_outlet_metal_angle(
-        self, outlet_metal_angle: float, *, ideal_outlet_absolute_flow_mach: float | None = None
-    ) -> float:
+    def _flow_residual_for_outlet_metal_angle(self, outlet_metal_angle: float, *,
+                                              ideal_outlet_absolute_flow_mach: float | None = None) -> float:
         """Return selected mixed angle minus the requested outlet angle.
 
         :param float outlet_metal_angle: Trial outlet metal angle, degrees.
@@ -854,26 +829,13 @@ class SupersonicStatorNozzle:
 
         initial = np.asarray([min(max(self.requested_outlet_absolute_flow_angle, 0.75), 89.25)], dtype=float)
         try:
-            solution = least_squares(
-                scaled_residual,
-                initial,
-                bounds=([0.5], [89.5]),
-                diff_step=5.0e-3,
-                xtol=1.0e-10,
-                ftol=1.0e-10,
-                gtol=1.0e-10,
-                max_nfev=60)
+            solution = least_squares(scaled_residual, initial, bounds=([0.5], [89.5]), diff_step=5.0e-3,
+                                     xtol=1.0e-10, ftol=1.0e-10, gtol=1.0e-10, max_nfev=60)
             outlet_metal_angle = float(solution.x[0])
-            final_residual = (
-                self._flow_residual_for_outlet_metal_angle(outlet_metal_angle,
-                ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach))
-        except (
-            BoundaryLayerError,
-            StatorGeometryError,
-            StatorDesignConvergenceError,
-            ValueError,
-            OverflowError,
-        ) as error:
+            final_residual = self._flow_residual_for_outlet_metal_angle(outlet_metal_angle,
+                ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach)
+        except (BoundaryLayerError, StatorGeometryError, StatorDesignConvergenceError, ValueError,
+                OverflowError) as error:
             raise StatorDesignConvergenceError(
                 "stator outlet flow-angle solve encountered an infeasible trial") from error
         if solution.success and abs(final_residual) <= angle_tolerance:
@@ -900,10 +862,10 @@ class SupersonicStatorNozzle:
         upper_ideal_outlet_absolute_flow_mach = max(10.0, 3.0 * target_real_outlet_absolute_flow_mach)
         initial_ideal_outlet_absolute_flow_mach = max(target_real_outlet_absolute_flow_mach, 1.05)
         initial_outlet_metal_angle = self.requested_outlet_absolute_flow_angle
-        variables = np.asarray(
-            [min(max(initial_outlet_metal_angle, 0.75), 89.25),
-             min(max(initial_ideal_outlet_absolute_flow_mach, lower_ideal_outlet_absolute_flow_mach),
-                 upper_ideal_outlet_absolute_flow_mach)], dtype=float)
+        variables = np.asarray([min(max(initial_outlet_metal_angle, 0.75), 89.25),
+                                min(max(initial_ideal_outlet_absolute_flow_mach,
+                                        lower_ideal_outlet_absolute_flow_mach),
+                                    upper_ideal_outlet_absolute_flow_mach)], dtype=float)
 
         def residual(values: np.ndarray) -> np.ndarray:
             """Evaluate mixed angle and Mach residuals for one solver trial.
@@ -920,10 +882,9 @@ class SupersonicStatorNozzle:
             _, selected = self._select_mixing_result(mixing)
             if not bool(selected["available"]):
                 raise StatorDesignConvergenceError("selected aftermixing solution is unavailable")
-            result = np.asarray(
-                [float(selected["real_outlet_absolute_flow_angle"]) - self.requested_outlet_absolute_flow_angle,
-                    float(selected["real_outlet_absolute_flow_mach"]) - target_real_outlet_absolute_flow_mach],
-                dtype=float)
+            result = np.asarray([
+                float(selected["real_outlet_absolute_flow_angle"]) - self.requested_outlet_absolute_flow_angle,
+                float(selected["real_outlet_absolute_flow_mach"]) - target_real_outlet_absolute_flow_mach], dtype=float)
             if not np.all(np.isfinite(result)):
                 raise StatorDesignConvergenceError("selected aftermixing solution is not physical")
             return result
@@ -938,30 +899,19 @@ class SupersonicStatorNozzle:
             return result / np.asarray([angle_tolerance, mach_tolerance], dtype=float)
 
         try:
-            solution = least_squares(
-                scaled_residual,
-                variables,
-                bounds=([0.5, lower_ideal_outlet_absolute_flow_mach],
-                        [89.5, upper_ideal_outlet_absolute_flow_mach]),
-                diff_step=5.0e-3,
-                x_scale=np.asarray([10.0, 0.5], dtype=float),
-                xtol=1.0e-10,
-                ftol=1.0e-10,
-                gtol=1.0e-10,
-                max_nfev=100)
+            solution = least_squares(scaled_residual, variables,
+                                     bounds=([0.5, lower_ideal_outlet_absolute_flow_mach],
+                                             [89.5, upper_ideal_outlet_absolute_flow_mach]),
+                                     diff_step=5.0e-3, x_scale=np.asarray([10.0, 0.5], dtype=float),
+                                     xtol=1.0e-10, ftol=1.0e-10, gtol=1.0e-10, max_nfev=100)
             final_residual = residual(solution.x)
-        except (
-            BoundaryLayerError,
-            StatorGeometryError,
-            StatorDesignConvergenceError,
-            ValueError,
-            OverflowError) as error:
+        except (BoundaryLayerError, StatorGeometryError, StatorDesignConvergenceError, ValueError,
+                OverflowError) as error:
             raise StatorDesignConvergenceError(
                 "coupled stator outlet solve encountered an infeasible trial; "
                 "adjust the requested outlet state or mixing solution") from error
-        if (solution.success
-            and abs(float(final_residual[0])) <= angle_tolerance
-            and abs(float(final_residual[1])) <= mach_tolerance):
+        if (solution.success and abs(float(final_residual[0])) <= angle_tolerance
+                and abs(float(final_residual[1])) <= mach_tolerance):
             return float(solution.x[0]), float(solution.x[1])
         raise StatorDesignConvergenceError(
             "coupled stator outlet angle/Mach solve did not converge; "
@@ -975,8 +925,7 @@ class SupersonicStatorNozzle:
         :rtype: DimensionalNozzleShapes
         """
 
-        result = DimensionalNozzleShapes(
-            total_throat_area=self.total_throat_area,
+        result = DimensionalNozzleShapes(total_throat_area=self.total_throat_area,
             single_nozzle_throat_area=self.single_nozzle_throat_area,
             nozzle_count=self.nozzle_count,
             throat_height=self.throat_height,
