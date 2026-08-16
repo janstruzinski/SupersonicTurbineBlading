@@ -65,13 +65,8 @@ class SurfaceCoordinates:
             x=np.asarray(self.x * factor, dtype=float),
             y=np.asarray(self.y * factor, dtype=float),
             metal_angle=self.metal_angle.copy(),
-            absolute_flow_mach=(
-                None if self.absolute_flow_mach is None else self.absolute_flow_mach.copy()
-            ),
-            relative_flow_mach=(
-                None if self.relative_flow_mach is None else self.relative_flow_mach.copy()
-            ),
-        )
+            absolute_flow_mach=(None if self.absolute_flow_mach is None else self.absolute_flow_mach.copy()),
+            relative_flow_mach=(None if self.relative_flow_mach is None else self.relative_flow_mach.copy()))
 
 
 @dataclass(frozen=True)

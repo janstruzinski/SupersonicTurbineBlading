@@ -11,9 +11,8 @@ from ..gas_dynamics import critical_velocity_ratio, mach_from_critical_velocity_
 from .rotor_results import StartingResult
 
 
-def _bisect(
-    function: Callable[[float], float], lower: float, upper: float, *, tolerance: float = 1.0e-10, iterations: int = 150
-) -> float:
+def _bisect(function: Callable[[float], float], lower: float, upper: float, *, tolerance: float = 1.0e-10,
+            iterations: int = 150) -> float:
     """Find a scalar root inside a known sign-changing bracket.
 
     Bisection is slower than Newton's method but cannot leave the physical bracket. That reliability is useful for the
@@ -87,8 +86,7 @@ def calculate_starting_limit(
     ideal_inlet_relative_flow_mach: float,
     lower_surface_relative_flow_mach: float,
     upper_surface_relative_flow_mach: float,
-    gamma: float,
-) -> StartingResult:
+    gamma: float) -> StartingResult:
     """Port the ``START`` calculation in NASA TN D-4421.
 
     The result is the largest relative inlet Mach number that can swallow the
@@ -181,27 +179,20 @@ def calculate_starting_limit(
         upper = min(lower_mach_star / upper_mach_star - 1.0e-10, estimate + 0.12)
         grid = np.linspace(lower, upper, 200)
         pairs = [(float(value), fkmax(float(value))) for value in grid]
-        bracket = next(
-            (
-                (pairs[index][0], pairs[index + 1][0])
-                for index in range(len(pairs) - 1)
-                if pairs[index][1] * pairs[index + 1][1] <= 0.0
-            ),
-            None,
-        )
+        bracket = next(((pairs[index][0], pairs[index + 1][0])
+                        for index in range(len(pairs) - 1)
+                        if pairs[index][1] * pairs[index + 1][1] <= 0.0), None)
         if bracket is None:
             raise ValueError("could not bracket the NASA TN D-4421 starting root")
         k_max = _bisect(lambda value: fkmax(value), *bracket)
         weight_integral = fkmax(k_max, return_integral=True)
-        flow_reduction = (
-            1.0
+        flow_reduction = (1.0
             - limiting_ratio
             * gamma_plus**exponent
             * upper_mach_star
             / (upper_mach_star - lower_mach_star)
             * k_max
-            * weight_integral
-        )
+            * weight_integral)
         q_integral = _simpson(ofact, lower_mach_star, upper_mach_star)
         q_value = lower_mach_star * upper_mach_star / (upper_mach_star - lower_mach_star) * q_integral
         q_value /= 1.0 - flow_reduction
@@ -220,38 +211,23 @@ def calculate_starting_limit(
     # M*=1 and its infinite-Mach limit.
     grid = np.linspace(1.0 + 1.0e-9, limiting_ratio - 1.0e-9, 600)
     values = [(float(argument), frat(float(argument)) - q_value) for argument in grid]
-    bracket = next(
-        (
-            (values[index][0], values[index + 1][0])
-            for index in range(len(values) - 1)
-            if values[index][1] * values[index + 1][1] <= 0.0
-        ),
-        None,
-    )
+    bracket = next(((values[index][0], values[index + 1][0])
+                    for index in range(len(values) - 1)
+                    if values[index][1] * values[index + 1][1] <= 0.0), None)
     if bracket is None:
         raise ValueError("could not bracket maximum starting inlet Mach")
     maximum_mach_star = _bisect(lambda value: frat(value) - q_value, *bracket)
-    maximum_starting_ideal_inlet_relative_flow_mach = mach_from_critical_velocity_ratio(
-        maximum_mach_star, gamma
-    )
+    maximum_starting_ideal_inlet_relative_flow_mach = mach_from_critical_velocity_ratio(maximum_mach_star, gamma)
     maximum_starting_ideal_inlet_relative_prandtl_meyer_angle = math.degrees(
-        prandtl_meyer_angle(maximum_starting_ideal_inlet_relative_flow_mach, gamma)
-    )
+        prandtl_meyer_angle(maximum_starting_ideal_inlet_relative_flow_mach, gamma))
     weight_flow_parameter = (
-        (1.0 / gamma_plus) ** (gamma_plus / (2.0 * gamma_minus)) * weight_integral if weight_integral else 0.0
-    )
+        (1.0 / gamma_plus) ** (gamma_plus / (2.0 * gamma_minus)) * weight_integral if weight_integral else 0.0)
     return StartingResult(
-        maximum_starting_ideal_inlet_relative_flow_mach=(
-            maximum_starting_ideal_inlet_relative_flow_mach
-        ),
+        maximum_starting_ideal_inlet_relative_flow_mach=maximum_starting_ideal_inlet_relative_flow_mach,
         maximum_starting_ideal_inlet_relative_prandtl_meyer_angle=(
-            maximum_starting_ideal_inlet_relative_prandtl_meyer_angle
-        ),
+            maximum_starting_ideal_inlet_relative_prandtl_meyer_angle),
         specified_ideal_inlet_relative_flow_mach=ideal_inlet_relative_flow_mach,
-        starts_supersonically=(
-            ideal_inlet_relative_flow_mach <= maximum_starting_ideal_inlet_relative_flow_mach
-        ),
+        starts_supersonically=ideal_inlet_relative_flow_mach <= maximum_starting_ideal_inlet_relative_flow_mach,
         critical_vortex_constant=k_max,
         two_dimensional_flow_reduction=flow_reduction,
-        weight_flow_parameter=weight_flow_parameter,
-    )
+        weight_flow_parameter=weight_flow_parameter)

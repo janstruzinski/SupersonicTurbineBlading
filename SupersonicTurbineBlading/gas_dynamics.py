@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from scipy.optimize import bisect, toms748
 
 
 def critical_velocity_ratio(mach: float | np.ndarray, gamma: float) -> float | np.ndarray:
@@ -53,9 +54,8 @@ def prandtl_meyer_angle(mach: float | np.ndarray, gamma: float) -> float | np.nd
     if np.any(mach < 1.0):
         raise ValueError("the Prandtl-Meyer relation requires Mach >= 1")
     root = np.sqrt(np.maximum(mach * mach - 1.0, 0.0))
-    value = math.sqrt((gamma + 1.0) / (gamma - 1.0)) * np.arctan(
-        math.sqrt((gamma - 1.0) / (gamma + 1.0)) * root
-    ) - np.arctan(root)
+    value = math.sqrt((gamma + 1.0) / (gamma - 1.0)) * np.arctan(math.sqrt((gamma - 1.0) / (gamma + 1.0)) * root) \
+            - np.arctan(root)
     return float(value) if np.ndim(value) == 0 else value
 
 
@@ -67,7 +67,7 @@ def mach_from_prandtl_meyer(nu_rad: float, gamma: float) -> float:
     :return: Ordinary supersonic Mach number, -.
     :rtype: float
     :raises ValueError: If the angle is negative or exceeds its infinite-Mach limit.
-    :raises RuntimeError: If a numerical upper bound cannot be found.
+    :raises RuntimeError: If a numerical upper bound cannot be found or the inversion does not converge.
     """
 
     if nu_rad < -1.0e-12:
@@ -79,27 +79,13 @@ def mach_from_prandtl_meyer(nu_rad: float, gamma: float) -> float:
         raise ValueError("Prandtl-Meyer angle is above its infinite-Mach limit")
 
     # Double the upper bound until it lies above the requested angle. This avoids imposing an arbitrary maximum design
-    # Mach number while still giving the Newton iteration a guaranteed bracket.
+    # Mach number while giving the TOMS Algorithm 748 iteration a guaranteed bracket.
     lower, upper = 1.0, 2.0
     while prandtl_meyer_angle(upper, gamma) < nu_rad:
         upper *= 2.0
         if upper > 1.0e8:
             raise RuntimeError("failed to bracket the Prandtl-Meyer inverse")
-    value = 0.5 * (lower + upper)
-    for _ in range(30):
-        residual = float(prandtl_meyer_angle(value, gamma)) - nu_rad
-        if abs(residual) <= 2.0e-13:
-            return value
-        derivative = math.sqrt(max(value * value - 1.0, 0.0)) / (value * (1.0 + 0.5 * (gamma - 1.0) * value * value))
-        if residual < 0.0:
-            lower = value
-        else:
-            upper = value
-        # Use the analytic Newton update when it remains inside the bracket. Bisection is the safe fallback near Mach 1,
-        # where the derivative approaches zero, and whenever a Newton step would leave the physical interval.
-        candidate = value - residual / derivative if derivative > 1.0e-14 else math.nan
-        value = candidate if lower < candidate < upper else 0.5 * (lower + upper)
-    return value
+    return float(toms748(lambda mach: float(prandtl_meyer_angle(mach, gamma)) - nu_rad, lower, upper))
 
 
 def mass_flow_parameter(mach: float | np.ndarray, gamma: float) -> float | np.ndarray:
@@ -120,7 +106,7 @@ def mass_flow_parameter(mach: float | np.ndarray, gamma: float) -> float | np.nd
 def isentropic_area_ratio(mach: float | np.ndarray, gamma: float) -> float | np.ndarray:
     """Return the perfect-gas nozzle area ratio ``A/A*``.
 
-    This is the NASA Glenn area--Mach relation used for the conical stator
+    This is the area--Mach relation used for the conical stator
     option. Both its subsonic and supersonic branches have a minimum value
     of one at the sonic throat.
 
@@ -150,7 +136,7 @@ def supersonic_mach_from_area_ratio(area_ratio: float, gamma: float) -> float:
     :return: Supersonic ordinary Mach number, -.
     :rtype: float
     :raises ValueError: If the area ratio or gamma is outside the perfect-gas domain.
-    :raises RuntimeError: If the supersonic branch cannot be bracketed.
+    :raises RuntimeError: If the supersonic branch cannot be bracketed or the inversion does not converge.
     """
 
     if not math.isfinite(area_ratio) or area_ratio < 1.0:
@@ -160,8 +146,8 @@ def supersonic_mach_from_area_ratio(area_ratio: float, gamma: float) -> float:
     if abs(area_ratio - 1.0) <= 1.0e-14:
         return 1.0
 
-    # The area-Mach relation is monotonic above Mach 1. Doubling the upper value and then bisecting gives a transparent,
-    # robust inverse without requiring a user-supplied initial estimate.
+    # The area-Mach relation is monotonic above Mach 1. Doubling the upper value gives SciPy's bisection iteration a
+    # guaranteed bracket without requiring a user-supplied initial estimate.
     lower = 1.0
     upper = 2.0
     while isentropic_area_ratio(upper, gamma) < area_ratio:
@@ -169,13 +155,4 @@ def supersonic_mach_from_area_ratio(area_ratio: float, gamma: float) -> float:
         if upper > 1.0e8:
             raise RuntimeError("failed to bracket the supersonic area-ratio inverse")
 
-    for _ in range(100):
-        midpoint = 0.5 * (lower + upper)
-        midpoint_ratio = float(isentropic_area_ratio(midpoint, gamma))
-        if abs(midpoint_ratio - area_ratio) <= (1.0e-12 * area_ratio):
-            return midpoint
-        if midpoint_ratio < area_ratio:
-            lower = midpoint
-        else:
-            upper = midpoint
-    return 0.5 * (lower + upper)
+    return float(bisect(lambda mach: float(isentropic_area_ratio(mach, gamma)) - area_ratio, lower, upper))

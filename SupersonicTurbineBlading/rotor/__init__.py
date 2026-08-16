@@ -11,5 +11,4 @@ __all__ = [
     "GeometryError",
     "StartingResult",
     "SupersonicRotorBlade",
-    "design_ideal_geometry",
-]
+    "design_ideal_geometry"]

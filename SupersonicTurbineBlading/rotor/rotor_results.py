@@ -96,8 +96,7 @@ class BladeShape:
             inlet_pitch=self.inlet_pitch * factor,
             outlet_pitch=self.outlet_pitch * factor,
             max_flow_turning_increment=self.max_flow_turning_increment,
-            coordinate_scale=scale_name,
-        )
+            coordinate_scale=scale_name)
 
 
 @dataclass(frozen=True)
