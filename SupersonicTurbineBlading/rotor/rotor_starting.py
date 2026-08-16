@@ -3,83 +3,13 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 
 import numpy as np
+from scipy.integrate import quad
+from scipy.optimize import bisect
 
 from ..gas_dynamics import critical_velocity_ratio, mach_from_critical_velocity_ratio, prandtl_meyer_angle
 from .rotor_results import StartingResult
-
-
-def _bisect(function: Callable[[float], float], lower: float, upper: float, *, tolerance: float = 1.0e-10,
-            iterations: int = 150) -> float:
-    """Find a scalar root inside a known sign-changing bracket.
-
-    Bisection is slower than Newton's method but cannot leave the physical bracket. That reliability is useful for the
-    strongly nonlinear starting integrals, whose derivatives are not available in NASA TN D-4421.
-
-    :param function function: Scalar residual function.
-    :param float lower: Lower root bracket.
-    :param float upper: Upper root bracket.
-    :param float tolerance: Absolute residual and bracket-width tolerance.
-    :param int iterations: Maximum bisection iterations.
-    :return: Approximate root.
-    :rtype: float
-    :raises ValueError: If either endpoint is non-finite or the endpoints do not bracket a root.
-    """
-
-    f_lower = function(lower)
-    f_upper = function(upper)
-    if not (math.isfinite(f_lower) and math.isfinite(f_upper)):
-        raise ValueError("non-finite value while bracketing a root")
-    if abs(f_lower) <= tolerance:
-        return lower
-    if abs(f_upper) <= tolerance:
-        return upper
-    if f_lower * f_upper > 0.0:
-        raise ValueError("root is not bracketed")
-    for _ in range(iterations):
-        middle = 0.5 * (lower + upper)
-        f_middle = function(middle)
-        if abs(f_middle) <= tolerance or abs(upper - lower) <= tolerance:
-            return middle
-        if f_lower * f_middle <= 0.0:
-            upper = middle
-        else:
-            lower = middle
-            f_lower = f_middle
-    return 0.5 * (lower + upper)
-
-
-def _simpson(function: Callable[[float], float], lower: float, upper: float) -> float:
-    """Integrate a scalar function with deterministic composite Simpson refinement.
-
-    :param function function: Scalar integrand.
-    :param float lower: Lower integration limit.
-    :param float upper: Upper integration limit.
-    :return: Numerically integrated value, with sign reversed when limits are supplied in descending order.
-    :rtype: float
-    """
-
-    if lower == upper:
-        return 0.0
-    sign = 1.0
-    if upper < lower:
-        lower, upper = upper, lower
-        sign = -1.0
-    # Double the even panel count on every pass. Comparing two consecutive results provides a transparent convergence
-    # test and avoids adding a numerical-integration dependency to this small legacy calculation.
-    previous = None
-    for power in range(5, 15):
-        count = 2**power
-        x = np.linspace(lower, upper, count + 1)
-        y = np.array([function(float(item)) for item in x], dtype=float)
-        step = (upper - lower) / count
-        result = step / 3.0 * (y[0] + y[-1] + 4.0 * y[1:-1:2].sum() + 2.0 * y[2:-2:2].sum())
-        if previous is not None and abs(result - previous) <= 1.0e-9 * max(1.0, abs(result)):
-            return sign * float(result)
-        previous = result
-    return sign * float(previous)
 
 
 def calculate_starting_limit(
@@ -166,7 +96,7 @@ def calculate_starting_limit(
 
                 return alfunc(1.0, same, argument)
 
-            integral = _simpson(cfact, lower_mach_star, upper_mach_star)
+            integral = float(quad(cfact, lower_mach_star, upper_mach_star, epsabs=1.0e-9, epsrel=1.0e-9)[0])
             if return_integral:
                 return integral
             return integral + upper_mach_star * cfact(upper_mach_star) - alfunc(1.0, k_value**2, 1.0)
@@ -184,16 +114,11 @@ def calculate_starting_limit(
                         if pairs[index][1] * pairs[index + 1][1] <= 0.0), None)
         if bracket is None:
             raise ValueError("could not bracket the NASA TN D-4421 starting root")
-        k_max = _bisect(lambda value: fkmax(value), *bracket)
+        k_max = bisect(fkmax, *bracket, xtol=1.0e-10, maxiter=150)
         weight_integral = fkmax(k_max, return_integral=True)
-        flow_reduction = (1.0
-            - limiting_ratio
-            * gamma_plus**exponent
-            * upper_mach_star
-            / (upper_mach_star - lower_mach_star)
-            * k_max
-            * weight_integral)
-        q_integral = _simpson(ofact, lower_mach_star, upper_mach_star)
+        flow_reduction = (1.0 - limiting_ratio * gamma_plus**exponent * upper_mach_star
+                          / (upper_mach_star - lower_mach_star) * k_max * weight_integral)
+        q_integral = float(quad(ofact, lower_mach_star, upper_mach_star, epsabs=1.0e-9, epsrel=1.0e-9)[0])
         q_value = lower_mach_star * upper_mach_star / (upper_mach_star - lower_mach_star) * q_integral
         q_value /= 1.0 - flow_reduction
 
@@ -216,7 +141,7 @@ def calculate_starting_limit(
                     if values[index][1] * values[index + 1][1] <= 0.0), None)
     if bracket is None:
         raise ValueError("could not bracket maximum starting inlet Mach")
-    maximum_mach_star = _bisect(lambda value: frat(value) - q_value, *bracket)
+    maximum_mach_star = bisect(lambda value: frat(value) - q_value, *bracket, xtol=1.0e-10, maxiter=150)
     maximum_starting_ideal_inlet_relative_flow_mach = mach_from_critical_velocity_ratio(maximum_mach_star, gamma)
     maximum_starting_ideal_inlet_relative_prandtl_meyer_angle = math.degrees(
         prandtl_meyer_angle(maximum_starting_ideal_inlet_relative_flow_mach, gamma))
