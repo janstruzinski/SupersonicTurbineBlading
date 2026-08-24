@@ -335,11 +335,12 @@ def design_ideal_geometry(*, real_inlet_relative_flow_mach: float,
 
     # Project between the two non-aligned transition endpoints along the uniform inlet/outlet flow directions. These are
     # open passage widths; finite leading- and trailing-edge metal is added later by ``SupersonicRotorBlade``.
-    inlet_pitch = lower_in.y[0] - (upper_in.y[0] + math.tan(inlet_metal_angle_rad) * (lower_in.x[0] - upper_in.x[0]))
-    outlet_pitch = lower_out.y[0] - (upper_out.y[0]
+    inlet_passage_pitch = (
+        lower_in.y[0] - upper_in.y[0] - math.tan(inlet_metal_angle_rad) * (lower_in.x[0] - upper_in.x[0]))
+    outlet_passage_pitch = lower_out.y[0] - (upper_out.y[0]
         + math.tan(outlet_metal_angle_rad) * (lower_out.x[0] - upper_out.x[0]))
-    if inlet_pitch <= 0.0 or outlet_pitch <= 0.0:
-        raise GeometryError("computed blade pitch is not positive")
+    if inlet_passage_pitch <= 0.0 or outlet_passage_pitch <= 0.0:
+        raise GeometryError("computed blade passage pitch is not positive")
 
     # Join the four transition arcs with fixed-node constant-Mach vortex circles.
     r_low = 1.0 / critical_velocity_ratio(lower_surface_relative_flow_mach, gamma)
@@ -415,6 +416,7 @@ def design_ideal_geometry(*, real_inlet_relative_flow_mach: float,
 
     return BladeShape(pressure_surface=make_surface(pressure_x, pressure_y, pressure_ms, pressure_eta),
                       suction_surface=make_surface(suction_x, suction_y, suction_ms, suction_eta),
-                      chord=chord, inlet_pitch=float(inlet_pitch), outlet_pitch=float(outlet_pitch),
+                      chord=chord, inlet_passage_pitch=float(inlet_passage_pitch),
+                      outlet_passage_pitch=float(outlet_passage_pitch),
                       max_flow_turning_increment=max_flow_turning_increment,
                       coordinate_scale="vortex sonic radius r*")

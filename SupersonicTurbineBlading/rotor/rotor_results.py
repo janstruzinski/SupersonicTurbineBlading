@@ -40,14 +40,14 @@ class FlowStateTable:
 class BladeShape:
     """A pressure/suction-side rotor passage in one length scale.
 
-    ``inlet_pitch`` and ``outlet_pitch`` are open passage widths; they do not
+    ``inlet_passage_pitch`` and ``outlet_passage_pitch`` are open passage widths; they do not
     include leading- or trailing-edge blade metal thickness.
 
     :ivar pressure_surface: Pressure-side surface forming the upper boundary of the stored passage.
     :ivar suction_surface: Suction-side surface forming the lower boundary of the stored passage.
     :ivar float chord: Axial blade chord in the active length scale.
-    :ivar float inlet_pitch: Open inlet passage width in the active length scale.
-    :ivar float outlet_pitch: Open outlet passage width in the active length scale.
+    :ivar float inlet_passage_pitch: Open inlet passage width in the active length scale.
+    :ivar float outlet_passage_pitch: Open outlet passage width in the active length scale.
     :ivar float max_flow_turning_increment: Largest flow-turning increment between adjacent MOC nodes, deg.
     :ivar str coordinate_scale: Human-readable description of the active length scale.
     """
@@ -55,30 +55,10 @@ class BladeShape:
     pressure_surface: SurfaceCoordinates
     suction_surface: SurfaceCoordinates
     chord: float
-    inlet_pitch: float
-    outlet_pitch: float
+    inlet_passage_pitch: float
+    outlet_passage_pitch: float
     max_flow_turning_increment: float
     coordinate_scale: str
-
-    @property
-    def inlet_passage_pitch(self) -> float:
-        """Return the open inlet passage width.
-
-        :return: Alias of :attr:`inlet_pitch`.
-        :rtype: float
-        """
-
-        return self.inlet_pitch
-
-    @property
-    def outlet_passage_pitch(self) -> float:
-        """Return the open outlet passage width.
-
-        :return: Alias of :attr:`outlet_pitch`.
-        :rtype: float
-        """
-
-        return self.outlet_pitch
 
     def scaled(self, factor: float, scale_name: str) -> BladeShape:
         """Return a geometrically scaled copy.
@@ -92,10 +72,22 @@ class BladeShape:
         return BladeShape(pressure_surface=self.pressure_surface.scaled(factor),
                           suction_surface=self.suction_surface.scaled(factor),
                           chord=self.chord * factor,
-                          inlet_pitch=self.inlet_pitch * factor,
-                          outlet_pitch=self.outlet_pitch * factor,
+                          inlet_passage_pitch=self.inlet_passage_pitch * factor,
+                          outlet_passage_pitch=self.outlet_passage_pitch * factor,
                           max_flow_turning_increment=self.max_flow_turning_increment,
                           coordinate_scale=scale_name)
+
+
+@dataclass(frozen=True)
+class BladeShapes:
+    """Store uncorrected and BL-corrected rotor geometries in one coordinate scale.
+
+    :ivar BladeShape uncorrected: Inviscid rotor geometry.
+    :ivar BladeShape corrected: Boundary-layer-corrected rotor geometry.
+    """
+
+    uncorrected: BladeShape
+    corrected: BladeShape
 
 
 @dataclass(frozen=True)

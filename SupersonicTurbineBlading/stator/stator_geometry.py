@@ -253,12 +253,14 @@ def design_ideal_stator_nozzle(*, ideal_outlet_absolute_flow_mach: float, outlet
     pressure_x = stored_contour.x.copy()
     pressure_y = -stored_contour.y.copy()
     pressure_absolute_flow_mach = stored_contour.absolute_flow_mach.copy()
-    spacing = 2.0 * exit_y / math.cos(outlet_metal_angle_rad)
+    nozzle_passage_pitch = 2.0 * exit_y / math.cos(outlet_metal_angle_rad)
 
     shape = NozzleShape(pressure_surface=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
                         suction_surface=_surface(suction_x, suction_y, suction_absolute_flow_mach),
-                        chord=float(suction_x[-1]), throat_width=2.0, exit_opening=2.0 * exit_y,
-                        spacing=spacing, coordinate_scale="throat half-width")
+                        chord=float(suction_x[-1]), throat_width=2.0, nozzle_exit_width=2.0 * exit_y,
+                        nozzle_passage_pitch=nozzle_passage_pitch, total_pitch=nozzle_passage_pitch,
+                        trailing_edge_thickness=0.0,
+                        coordinate_scale="throat half-width")
     return IdealNozzleConstruction(shape=shape, contour_point_count=len(stored_contour.x),
                                    actual_flow_turning_increment=contour.actual_flow_turning_increment,
                                    pressure_point_count=pressure_point_count)
@@ -334,8 +336,11 @@ def design_conical_stator_nozzle(*, ideal_outlet_absolute_flow_mach: float, outl
     shape = NozzleShape(pressure_surface=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
                         suction_surface=_surface(suction_x, suction_y, suction_absolute_flow_mach),
                         chord=float(suction_x[-1]), throat_width=1.0,
-                        exit_opening=2.0 * exit_radius_over_throat_diameter,
-                        spacing=2.0 * exit_radius_over_throat_diameter / math.cos(outlet_metal_angle_rad),
+                        nozzle_exit_width=2.0 * exit_radius_over_throat_diameter,
+                        nozzle_passage_pitch=(
+                            2.0 * exit_radius_over_throat_diameter / math.cos(outlet_metal_angle_rad)),
+                        total_pitch=2.0 * exit_radius_over_throat_diameter / math.cos(outlet_metal_angle_rad),
+                        trailing_edge_thickness=0.0,
                         coordinate_scale="throat diameter")
     return IdealNozzleConstruction(shape=shape, contour_point_count=number_of_nodes,
                                    actual_flow_turning_increment=None, pressure_point_count=number_of_nodes)

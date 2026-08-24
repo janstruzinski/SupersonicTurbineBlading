@@ -34,7 +34,7 @@ blade = SupersonicRotorBlade(ideal_inlet_absolute_flow_mach=2.2,  # ideal absolu
     # Boundary layer calculations are "laminar_then_turbulent", with no initial thickness inputs
     boundary_layer_mode="laminar_then_turbulent",
     # Iterate pitch closure to maintain the same leading and trailing edge thickness
-    iterate_pitch_closure=False)
+    iterate_passage_pitch_closure=False)
 
 print(f"Frozen inlet-static gamma: {blade.gamma:.5f}")
 print(f"Solidity: {blade.solidity:.3f}")

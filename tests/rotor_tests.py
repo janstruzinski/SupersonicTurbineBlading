@@ -89,9 +89,9 @@ def test_nasa_tm_x_2434_example_geometry_regression():
         number_of_nodes=201,
         gamma=gamma,
     )
-    assert math.isclose(shape.inlet_pitch, 0.59436, rel_tol=4.0e-4)
-    assert math.isclose(shape.chord / shape.inlet_pitch, 2.7603, rel_tol=4.0e-4)
-    assert math.isclose(shape.chord / shape.outlet_pitch, 3.8966, rel_tol=4.0e-4)
+    assert math.isclose(shape.inlet_passage_pitch, 0.59436, rel_tol=4.0e-4)
+    assert math.isclose(shape.chord / shape.inlet_passage_pitch, 2.7603, rel_tol=4.0e-4)
+    assert math.isclose(shape.chord / shape.outlet_passage_pitch, 3.8966, rel_tol=4.0e-4)
 
 
 @pytest.mark.parametrize(
@@ -173,7 +173,7 @@ def test_nasa_tn_d_4422_impulse_blade_solidities(
     assert case_name
     # NASA TN D-4422 reports solidity to two decimal places. The fixed-node
     # integration also differs slightly from the legacy variable-increment mesh.
-    assert abs(shape.chord / shape.inlet_pitch - reported_solidity) <= 2.0e-2
+    assert abs(shape.chord / shape.inlet_passage_pitch - reported_solidity) <= 2.0e-2
     assert np.all(np.isfinite(shape.pressure_surface.x))
     assert np.all(np.isfinite(shape.pressure_surface.y))
     assert np.all(np.isfinite(shape.suction_surface.x))
@@ -182,35 +182,40 @@ def test_nasa_tn_d_4422_impulse_blade_solidities(
 
 def test_object_stores_ideal_and_corrected_shapes():
     blade = make_blade()
-    assert blade.uncorrected_shape.coordinate_scale == "vortex sonic radius r*"
-    assert blade.corrected_shape.coordinate_scale == "vortex sonic radius r*"
-    assert len(blade.pressure_boundary_layer.s_over_chord) == len(blade.uncorrected_shape.pressure_surface.x)
-    assert len(blade.suction_boundary_layer.s_over_chord) == len(blade.uncorrected_shape.suction_surface.x)
-    assert len(blade.pressure_boundary_layer_marching.s_over_chord) == len(blade.uncorrected_shape.pressure_surface.x)
-    assert len(blade.suction_boundary_layer_marching.s_over_chord) == len(blade.uncorrected_shape.suction_surface.x)
-    assert np.allclose(blade.uncorrected_shape.pressure_surface.x, blade.corrected_shape.pressure_surface.x)
-    assert not np.allclose(blade.uncorrected_shape.pressure_surface.y, blade.corrected_shape.pressure_surface.y)
+    uncorrected = blade.nondimensional_shapes.uncorrected
+    corrected = blade.nondimensional_shapes.corrected
+    assert uncorrected.coordinate_scale == "vortex sonic radius r*"
+    assert corrected.coordinate_scale == "vortex sonic radius r*"
+    assert len(blade.pressure_boundary_layer.s_over_chord) == len(uncorrected.pressure_surface.x)
+    assert len(blade.suction_boundary_layer.s_over_chord) == len(uncorrected.suction_surface.x)
+    assert np.allclose(uncorrected.pressure_surface.x, corrected.pressure_surface.x)
+    assert not np.allclose(uncorrected.pressure_surface.y, corrected.pressure_surface.y)
     assert blade.pressure_boundary_layer.regime[0] == "turbulent"
     assert blade.gamma == blade.inlet_static_fluid_state.gamma
     assert not math.isclose(blade.gamma, blade.inlet_total_fluid_state.gamma, rel_tol=1.0e-4)
     assert blade.prandtl_number == blade.inlet_static_fluid_state.prandtl_number
     assert blade.inlet_metal_angle == blade.real_inlet_relative_flow_angle
     assert blade.outlet_metal_angle == blade.ideal_outlet_relative_flow_angle
-    assert blade.uncorrected_shape.pressure_surface.absolute_flow_mach is None
-    assert blade.uncorrected_shape.pressure_surface.relative_flow_mach is not None
+    assert uncorrected.pressure_surface.absolute_flow_mach is None
+    assert uncorrected.pressure_surface.relative_flow_mach is not None
     assert blade.pressure_boundary_layer.freestream_absolute_flow_mach is None
     assert blade.pressure_boundary_layer.freestream_relative_flow_mach is not None
+    assert not hasattr(blade, "pressure_boundary_layer_marching")
+    assert not hasattr(blade, "suction_boundary_layer_marching")
+    assert not hasattr(blade, "boundary_layer_pressure_station_count")
+    assert not hasattr(blade, "boundary_layer_suction_station_count")
     expected_static_temperature = blade.inlet_total_temperature / (
         1.0 + 0.5 * (blade.gamma - 1.0) * blade.ideal_inlet_absolute_flow_mach**2
     )
     assert math.isclose(blade.inlet_static_temperature, expected_static_temperature, rel_tol=1.0e-10)
     assert math.isclose(
         blade.pressure_boundary_layer.displacement_thickness_over_chord[0],
-        2.4e-4 / blade.physical_chord,
+        2.4e-4 / blade.dimensional_chord,
         rel_tol=1.0e-12,
     )
     assert math.isclose(
-        blade.pressure_boundary_layer.momentum_thickness_over_chord[0], 6.0e-5 / blade.physical_chord, rel_tol=1.0e-12
+        blade.pressure_boundary_layer.momentum_thickness_over_chord[0], 6.0e-5 / blade.dimensional_chord,
+        rel_tol=1.0e-12
     )
 
 
@@ -358,14 +363,14 @@ def test_relative_flow_input_set_reproduces_the_same_velocity_triangles_and_geom
         "ideal_outlet_relative_flow_angle",
     ):
         assert math.isclose(getattr(relative, name), getattr(absolute, name), rel_tol=1.0e-12, abs_tol=1.0e-12)
-    assert np.allclose(relative.uncorrected_shape.pressure_surface.x,
-                       absolute.uncorrected_shape.pressure_surface.x, atol=1.0e-13)
-    assert np.allclose(relative.uncorrected_shape.pressure_surface.y,
-                       absolute.uncorrected_shape.pressure_surface.y, atol=1.0e-13)
-    assert np.allclose(relative.uncorrected_shape.suction_surface.x,
-                       absolute.uncorrected_shape.suction_surface.x, atol=1.0e-13)
-    assert np.allclose(relative.uncorrected_shape.suction_surface.y,
-                       absolute.uncorrected_shape.suction_surface.y, atol=1.0e-13)
+    assert np.allclose(relative.nondimensional_shapes.uncorrected.pressure_surface.x,
+                       absolute.nondimensional_shapes.uncorrected.pressure_surface.x, atol=1.0e-13)
+    assert np.allclose(relative.nondimensional_shapes.uncorrected.pressure_surface.y,
+                       absolute.nondimensional_shapes.uncorrected.pressure_surface.y, atol=1.0e-13)
+    assert np.allclose(relative.nondimensional_shapes.uncorrected.suction_surface.x,
+                       absolute.nondimensional_shapes.uncorrected.suction_surface.x, atol=1.0e-13)
+    assert np.allclose(relative.nondimensional_shapes.uncorrected.suction_surface.y,
+                       absolute.nondimensional_shapes.uncorrected.suction_surface.y, atol=1.0e-13)
 
 
 def test_relative_flow_input_set_accepts_an_explicit_outlet_mach():
@@ -385,10 +390,10 @@ def test_relative_flow_input_set_accepts_an_explicit_outlet_mach():
     assert relative.requested_outlet_relative_flow_mach == absolute.ideal_outlet_relative_flow_mach
     assert math.isclose(relative.requested_outlet_absolute_flow_mach, 2.0, rel_tol=1.0e-12)
     assert math.isclose(relative.ideal_outlet_absolute_flow_mach, 2.0, rel_tol=1.0e-12)
-    assert np.allclose(relative.uncorrected_shape.pressure_surface.x,
-                       absolute.uncorrected_shape.pressure_surface.x, atol=1.0e-13)
-    assert np.allclose(relative.uncorrected_shape.suction_surface.y,
-                       absolute.uncorrected_shape.suction_surface.y, atol=1.0e-13)
+    assert np.allclose(relative.nondimensional_shapes.uncorrected.pressure_surface.x,
+                       absolute.nondimensional_shapes.uncorrected.pressure_surface.x, atol=1.0e-13)
+    assert np.allclose(relative.nondimensional_shapes.uncorrected.suction_surface.y,
+                       absolute.nondimensional_shapes.uncorrected.suction_surface.y, atol=1.0e-13)
 
 
 def test_absolute_and_relative_flow_input_sets_are_mutually_exclusive():
@@ -448,10 +453,12 @@ def test_zero_leading_edge_thickness_preserves_passage_entry_state():
     assert blade.real_inlet_relative_flow_angle == blade.ideal_inlet_relative_flow_angle
     assert blade.leading_edge_thickness == 0.0
     assert blade.trailing_edge_thickness == 0.0
-    assert blade.physical_leading_edge_thickness == 0.0
-    assert blade.physical_trailing_edge_thickness == 0.0
+    assert blade.dimensional_leading_edge_thickness == 0.0
+    assert blade.dimensional_trailing_edge_thickness == 0.0
     assert blade.inlet_passage_pitch == blade.inlet_total_pitch
-    assert blade.uncorrected_shape.inlet_passage_pitch == (blade.uncorrected_shape.inlet_pitch)
+    uncorrected = blade.nondimensional_shapes.uncorrected
+    assert uncorrected.inlet_passage_pitch == blade.inlet_passage_pitch
+    assert uncorrected.outlet_passage_pitch > 0.0
 
 
 def test_external_wave_entry_correction_satisfies_naca_rm_l52b06_equations():
@@ -483,8 +490,10 @@ def test_leading_edge_entry_correction_can_be_disabled():
 
     assert finite.real_inlet_relative_flow_mach == finite.ideal_inlet_relative_flow_mach
     assert finite.real_inlet_relative_flow_angle == finite.ideal_inlet_relative_flow_angle
-    assert np.array_equal(finite.uncorrected_shape.pressure_surface.x, baseline.uncorrected_shape.pressure_surface.x)
-    assert np.array_equal(finite.uncorrected_shape.pressure_surface.y, baseline.uncorrected_shape.pressure_surface.y)
+    assert np.array_equal(finite.nondimensional_shapes.uncorrected.pressure_surface.x,
+                          baseline.nondimensional_shapes.uncorrected.pressure_surface.x)
+    assert np.array_equal(finite.nondimensional_shapes.uncorrected.pressure_surface.y,
+                          baseline.nondimensional_shapes.uncorrected.pressure_surface.y)
 
 
 @pytest.mark.parametrize("ratio", [-0.01, 1.0, math.inf])
@@ -555,20 +564,16 @@ def test_rotor_subsonic_mixing_solution_overrides_automatic_selection():
 def test_rotor_boundary_layer_uses_the_fixed_moc_mesh():
     coarse = make_blade(number_of_nodes=25)
     fine = make_blade(number_of_nodes=51)
+    coarse_uncorrected = coarse.nondimensional_shapes.uncorrected
+    fine_uncorrected = fine.nondimensional_shapes.uncorrected
 
-    assert coarse.pressure_boundary_layer is coarse.pressure_boundary_layer_marching
-    assert coarse.suction_boundary_layer is coarse.suction_boundary_layer_marching
-    assert len(coarse.pressure_boundary_layer.s_over_chord) == len(coarse.uncorrected_shape.pressure_surface.x)
-    assert len(coarse.suction_boundary_layer.s_over_chord) == len(coarse.uncorrected_shape.suction_surface.x)
-    assert len(fine.pressure_boundary_layer.s_over_chord) == len(fine.uncorrected_shape.pressure_surface.x)
-    assert len(fine.suction_boundary_layer.s_over_chord) == len(fine.uncorrected_shape.suction_surface.x)
-    assert coarse.boundary_layer_pressure_station_count == len(coarse.uncorrected_shape.pressure_surface.x)
-    assert coarse.boundary_layer_suction_station_count == len(coarse.uncorrected_shape.suction_surface.x)
-    assert fine.boundary_layer_pressure_station_count == len(fine.uncorrected_shape.pressure_surface.x)
-    assert fine.boundary_layer_suction_station_count == len(fine.uncorrected_shape.suction_surface.x)
-    assert len(coarse.uncorrected_shape.pressure_surface.x) == 3 * coarse.number_of_nodes - 2
-    assert len(coarse.uncorrected_shape.suction_surface.x) == 3 * coarse.number_of_nodes + 18
-    assert len(fine.uncorrected_shape.pressure_surface.x) > len(coarse.uncorrected_shape.pressure_surface.x)
+    assert len(coarse.pressure_boundary_layer.s_over_chord) == len(coarse_uncorrected.pressure_surface.x)
+    assert len(coarse.suction_boundary_layer.s_over_chord) == len(coarse_uncorrected.suction_surface.x)
+    assert len(fine.pressure_boundary_layer.s_over_chord) == len(fine_uncorrected.pressure_surface.x)
+    assert len(fine.suction_boundary_layer.s_over_chord) == len(fine_uncorrected.suction_surface.x)
+    assert len(coarse_uncorrected.pressure_surface.x) == 3 * coarse.number_of_nodes - 2
+    assert len(coarse_uncorrected.suction_surface.x) == 3 * coarse.number_of_nodes + 18
+    assert len(fine_uncorrected.pressure_surface.x) > len(coarse_uncorrected.pressure_surface.x)
     assert fine.max_flow_turning_increment < coarse.max_flow_turning_increment
     assert math.isclose(
         coarse.max_flow_turning_increment * (coarse.number_of_nodes - 1),
@@ -612,16 +617,17 @@ def test_optional_absolute_outlet_mach_controls_exit_construction():
     assert not math.isclose(asymmetric.ideal_outlet_relative_flow_mach,
                             asymmetric.requested_outlet_absolute_flow_mach, rel_tol=1.0e-3)
     assert math.isclose(
-        asymmetric.uncorrected_shape.pressure_surface.relative_flow_mach[-1],
+        asymmetric.nondimensional_shapes.uncorrected.pressure_surface.relative_flow_mach[-1],
         asymmetric.ideal_outlet_relative_flow_mach,
         rel_tol=1.0e-12,
     )
     assert math.isclose(
-        asymmetric.uncorrected_shape.suction_surface.relative_flow_mach[-1],
+        asymmetric.nondimensional_shapes.uncorrected.suction_surface.relative_flow_mach[-1],
         asymmetric.ideal_outlet_relative_flow_mach,
         rel_tol=1.0e-12,
     )
-    assert not math.isclose(asymmetric.uncorrected_shape.chord, impulse.uncorrected_shape.chord, rel_tol=1.0e-3)
+    assert not math.isclose(asymmetric.nondimensional_shapes.uncorrected.chord,
+                            impulse.nondimensional_shapes.uncorrected.chord, rel_tol=1.0e-3)
 
 
 def test_iterated_outlet_metal_angle_keeps_specified_ideal_absolute_flow_mach():
@@ -677,22 +683,21 @@ def test_coupled_iteration_matches_real_relative_flow_mach_and_angle():
     )
 
 
-def test_legacy_pitch_closure_changes_metal_angle_and_closes_nasa_tm_x_2434_pitch():
+def test_legacy_passage_pitch_closure_changes_metal_angle_and_closes_nasa_tm_x_2434_pitch():
     with pytest.warns(UserWarning, match="changes the outlet.*angle"):
-        blade = make_blade(
-            iterate_pitch_closure=True, mixing_solution="subsonic", number_of_nodes=101
-        )
+        blade = make_blade(iterate_passage_pitch_closure=True, mixing_solution="subsonic", number_of_nodes=101)
 
-    assert blade.pitch_closure_iteration_count is not None
-    assert blade.pitch_closure_outlet_metal_angle == (blade.outlet_metal_angle)
+    assert blade.passage_pitch_closure_iteration_count is not None
+    assert blade.passage_pitch_closure_outlet_metal_angle == blade.outlet_metal_angle
     assert not math.isclose(blade.ideal_outlet_absolute_flow_angle, blade.requested_outlet_absolute_flow_angle,
                             abs_tol=1.0e-3)
-    assert abs(blade.pitch_closure_residual * blade.sonic_radius_scale) <= 1.0e-6
-    assert blade.pitch_residual == blade.pitch_closure_residual
-    assert not math.isclose(blade.corrected_pitch_residual, blade.pitch_closure_residual, abs_tol=1.0e-4)
+    assert abs(blade.passage_pitch_closure_residual * blade.sonic_radius_scale) <= 1.0e-6
+    assert blade.passage_pitch_residual == blade.passage_pitch_closure_residual
+    assert not math.isclose(
+        blade.corrected_passage_pitch_residual, blade.passage_pitch_closure_residual, abs_tol=1.0e-4)
 
 
-def test_relative_flow_inputs_support_nasa_tm_x_2434_pitch_closure():
+def test_relative_flow_inputs_support_nasa_tm_x_2434_passage_pitch_closure():
     initial = make_blade(number_of_nodes=101)
     with pytest.warns(UserWarning, match="changes the outlet.*angle"):
         blade = make_blade(
@@ -702,24 +707,24 @@ def test_relative_flow_inputs_support_nasa_tm_x_2434_pitch_closure():
             ideal_inlet_relative_flow_mach=initial.ideal_inlet_relative_flow_mach,
             ideal_inlet_relative_flow_angle=initial.ideal_inlet_relative_flow_angle,
             requested_outlet_relative_flow_angle=initial.ideal_outlet_relative_flow_angle,
-            iterate_pitch_closure=True,
+            iterate_passage_pitch_closure=True,
             mixing_solution="subsonic",
             number_of_nodes=101,
         )
 
     assert blade.flow_input_reference_frame == "relative"
-    assert blade.pitch_closure_iteration_count is not None
-    assert abs(blade.pitch_closure_residual * blade.sonic_radius_scale) <= 1.0e-6
+    assert blade.passage_pitch_closure_iteration_count is not None
+    assert abs(blade.passage_pitch_closure_residual * blade.sonic_radius_scale) <= 1.0e-6
 
 
-def test_pitch_closure_keeps_trailing_edge_as_thick_as_leading_edge():
+def test_passage_pitch_closure_keeps_trailing_edge_as_thick_as_leading_edge():
     with pytest.warns(UserWarning, match="changes the outlet.*angle"):
         blade = make_blade(
-            iterate_pitch_closure=True, leading_edge_thickness_over_total_pitch=0.05, number_of_nodes=101
+            iterate_passage_pitch_closure=True, leading_edge_thickness_over_total_pitch=0.05, number_of_nodes=101
         )
 
     assert blade.trailing_edge_thickness == blade.leading_edge_thickness
-    assert blade.physical_trailing_edge_thickness == blade.physical_leading_edge_thickness
+    assert blade.dimensional_trailing_edge_thickness == blade.dimensional_leading_edge_thickness
 
 
 @pytest.mark.parametrize(
@@ -733,9 +738,9 @@ def test_pitch_closure_keeps_trailing_edge_as_thick_as_leading_edge():
         },
     ],
 )
-def test_pitch_closure_rejects_mixed_flow_matching(matching_flags):
+def test_passage_pitch_closure_rejects_mixed_flow_matching(matching_flags):
     with pytest.raises(ValueError, match="incompatible"):
-        make_blade(iterate_pitch_closure=True, **matching_flags)
+        make_blade(iterate_passage_pitch_closure=True, **matching_flags)
 
 
 def test_subsonic_premixing_axial_mach_selects_subsonic_solution():
@@ -778,11 +783,13 @@ def test_supersonic_mixing_solution_override_is_rejected():
 def test_dimensionalization_uses_mean_radius_and_blade_count():
     blade = make_blade()
     result = blade.dimensionalize()
-    expected_pitch = 2.0 * math.pi * 0.20 / 36
-    scaled_pitch = blade.uncorrected_shape.inlet_pitch * result.sonic_radius_scale
-    assert math.isclose(scaled_pitch, expected_pitch, rel_tol=1.0e-12)
+    expected_total_pitch = 2.0 * math.pi * 0.20 / 36
+    scaled_total_pitch = blade.inlet_total_pitch * result.sonic_radius_scale
+    assert math.isclose(scaled_total_pitch, expected_total_pitch, rel_tol=1.0e-12)
     assert math.isclose(
-        result.corrected.chord, blade.corrected_shape.chord * result.sonic_radius_scale, rel_tol=1.0e-12
+        result.corrected.chord,
+        blade.nondimensional_shapes.corrected.chord * result.sonic_radius_scale,
+        rel_tol=1.0e-12,
     )
 
 
@@ -796,18 +803,22 @@ def test_finite_leading_edge_separates_total_and_passage_pitch():
         blade.inlet_total_pitch, blade.inlet_passage_pitch + blade.leading_edge_thickness, rel_tol=1.0e-12
     )
     assert math.isclose(blade.leading_edge_thickness / blade.inlet_total_pitch, ratio, rel_tol=1.0e-12)
-    assert math.isclose(blade.physical_total_pitch, expected_total_pitch, rel_tol=1.0e-12)
+    assert math.isclose(blade.dimensional_total_pitch, expected_total_pitch, rel_tol=1.0e-12)
     assert math.isclose(
-        blade.physical_passage_pitch + blade.physical_leading_edge_thickness, expected_total_pitch, rel_tol=1.0e-12
+        blade.dimensional_passage_pitch + blade.dimensional_leading_edge_thickness, expected_total_pitch,
+        rel_tol=1.0e-12
     )
-    assert math.isclose(result.uncorrected.inlet_pitch, blade.physical_passage_pitch, rel_tol=1.0e-12)
+    assert math.isclose(
+        result.uncorrected.inlet_passage_pitch, blade.dimensional_passage_pitch, rel_tol=1.0e-12)
 
 
 def test_nonclosure_trailing_edge_and_aftermixing_include_metal_blockage():
     blade = make_blade(leading_edge_thickness_over_total_pitch=0.20)
     expected_trailing_edge = max(0.0, blade.leading_edge_thickness - blade.trailing_edge_vertical_boundary_layer_height)
-    projected_outlet_pitch = blade.corrected_shape.outlet_pitch * math.cos(math.radians(blade.outlet_metal_angle))
-    expected_blockage = blade.trailing_edge_thickness / projected_outlet_pitch
+    projected_outlet_passage_pitch = (
+        blade.nondimensional_shapes.corrected.outlet_passage_pitch
+        * math.cos(math.radians(blade.outlet_metal_angle)))
+    expected_blockage = blade.trailing_edge_thickness / projected_outlet_passage_pitch
 
     assert math.isclose(blade.trailing_edge_thickness, expected_trailing_edge, rel_tol=1.0e-12)
     assert blade.trailing_edge_thickness > 0.0
@@ -821,11 +832,13 @@ def test_chord_reynolds_number_is_derived_from_dimensional_ideal_chord():
     blade = make_blade()
     expected_velocity = blade.ideal_inlet_relative_flow_mach * blade.inlet_static_fluid_state.speed_of_sound
     expected_reynolds_number = (
-        expected_velocity * blade.physical_chord / blade.inlet_static_fluid_state.kinematic_viscosity
+        expected_velocity * blade.dimensional_chord / blade.inlet_static_fluid_state.kinematic_viscosity
     )
 
     assert math.isclose(blade.chord_reynolds_number, expected_reynolds_number, rel_tol=1.0e-12)
-    assert math.isclose(blade.physical_chord, blade.uncorrected_shape.chord * blade.sonic_radius_scale, rel_tol=1.0e-12)
+    assert math.isclose(blade.dimensional_chord,
+                        blade.nondimensional_shapes.uncorrected.chord * blade.sonic_radius_scale,
+                        rel_tol=1.0e-12)
 
 
 def test_reynolds_number_scales_with_initialized_mean_radius():
@@ -834,7 +847,7 @@ def test_reynolds_number_scales_with_initialized_mean_radius():
     # doubling radius by halving RPM.
     doubled = make_blade(mean_radius=0.40, rotational_speed_rpm=3000.0)
 
-    assert math.isclose(doubled.physical_chord, 2.0 * reference.physical_chord, rel_tol=1.0e-12)
+    assert math.isclose(doubled.dimensional_chord, 2.0 * reference.dimensional_chord, rel_tol=1.0e-12)
     assert math.isclose(doubled.chord_reynolds_number, 2.0 * reference.chord_reynolds_number, rel_tol=1.0e-12)
 
 
@@ -859,7 +872,8 @@ def test_plot_pairs_opposite_surfaces_at_common_leading_edges():
     # four surface lines in physical top-to-bottom order: upper-blade
     # suction/pressure, then lower-blade suction/pressure. Four additional
     # lines close the upper and lower leading and trailing edges independently.
-    for corrected, shape in ((True, blade.corrected_shape), (False, blade.uncorrected_shape)):
+    for corrected, shape in ((True, blade.nondimensional_shapes.corrected),
+                             (False, blade.nondimensional_shapes.uncorrected)):
         figure, axes = blade.plot(corrected=corrected, show=False)
         assert figure is axes.figure
         assert len(axes.lines) == 8
@@ -917,7 +931,7 @@ def test_plot_pairs_opposite_surfaces_at_common_leading_edges():
 
 def test_plot_adds_leading_edge_thickness_only_to_outer_surfaces():
     blade = make_blade(leading_edge_thickness_over_total_pitch=0.20)
-    shape = blade.corrected_shape
+    shape = blade.nondimensional_shapes.corrected
     figure, axes = blade.plot(corrected=True, show=False)
     upper_suction, upper_pressure, lower_suction, lower_pressure, upper_leading_edge, lower_leading_edge = axes.lines[
         :6
@@ -948,10 +962,10 @@ def test_plot_adds_leading_edge_thickness_only_to_outer_surfaces():
     assert np.allclose(
         dimensional_upper_suction.get_ydata(),
         1000.0 * (dimensional_shape.suction_surface.y + dimensional_translation_y
-                  + blade.physical_leading_edge_thickness))
+                  + blade.dimensional_leading_edge_thickness))
     assert math.isclose(
         abs(float(np.diff(dimensional_upper_leading_edge.get_ydata())[0])),
-        1000.0 * blade.physical_leading_edge_thickness,
+        1000.0 * blade.dimensional_leading_edge_thickness,
     )
     assert dimensional_axes.get_xlabel() == "length [mm]"
     assert dimensional_axes.get_ylabel() == "length [mm]"
@@ -962,8 +976,10 @@ def test_cad_profiles_store_corrected_and_uncorrected_geometry_in_millimetres(th
     blade = make_blade(leading_edge_thickness_over_total_pitch=thickness_ratio)
 
     profiles = (
-        (blade.corrected_shape, blade.blade_profile_x_CAD, blade.blade_profile_y_CAD),
-        (blade.uncorrected_shape, blade.uncorrected_blade_profile_x_CAD, blade.uncorrected_blade_profile_y_CAD),
+        (blade.nondimensional_shapes.corrected, blade.blade_profile_x_CAD, blade.blade_profile_y_CAD),
+        (blade.nondimensional_shapes.uncorrected,
+         blade.uncorrected_blade_profile_x_CAD,
+         blade.uncorrected_blade_profile_y_CAD),
     )
     for nondimensional_shape, profile_x_CAD, profile_y_CAD in profiles:
         shape = nondimensional_shape.scaled(blade.sonic_radius_scale, "dimensional [m]")
@@ -973,7 +989,7 @@ def test_cad_profiles_store_corrected_and_uncorrected_geometry_in_millimetres(th
         lower_x = shape.pressure_surface.x - shape.pressure_surface.x[0]
         lower_y = shape.pressure_surface.y - shape.pressure_surface.y[0]
         upper_x = shape.suction_surface.x + translation_x - shape.pressure_surface.x[0]
-        upper_y = (shape.suction_surface.y + translation_y + blade.physical_leading_edge_thickness
+        upper_y = (shape.suction_surface.y + translation_y + blade.dimensional_leading_edge_thickness
                    - shape.pressure_surface.y[0])
         upper_x_reversed = upper_x[::-1]
         upper_y_reversed = upper_y[::-1]
@@ -998,11 +1014,12 @@ def test_cad_profiles_store_corrected_and_uncorrected_geometry_in_millimetres(th
         assert np.allclose(profile_y_CAD, 1000.0 * expected_y)
         if thickness_ratio > 0.0:
             assert math.isclose(profile_x_CAD[-1], 0.0, abs_tol=1.0e-12)
-            assert math.isclose(profile_y_CAD[-1], 1000.0 * blade.physical_leading_edge_thickness, rel_tol=1.0e-12)
+            assert math.isclose(
+                profile_y_CAD[-1], 1000.0 * blade.dimensional_leading_edge_thickness, rel_tol=1.0e-12)
 
 
-def test_plot_connectors_follow_corrected_or_uncorrected_line_style_without_pitch_closure():
-    blade = make_blade(iterate_pitch_closure=False, leading_edge_thickness_over_total_pitch=0.20)
+def test_plot_connectors_follow_corrected_or_uncorrected_line_style_without_passage_pitch_closure():
+    blade = make_blade(iterate_passage_pitch_closure=False, leading_edge_thickness_over_total_pitch=0.20)
 
     for corrected in (True, False):
         figure, axes = blade.plot(corrected=corrected, show=False)

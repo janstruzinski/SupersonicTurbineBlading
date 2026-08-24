@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import warnings
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import numpy as np
@@ -15,7 +16,7 @@ from ..fluid import Fluid, FluidState
 from ..gas_dynamics import isentropic_area_ratio
 from .stator_geometry import (ContourMethod, IdealNozzleConstruction, StatorGeometryError,
                               design_conical_stator_nozzle, design_ideal_stator_nozzle)
-from .stator_results import DimensionalNozzleShapes, NozzleShape
+from .stator_results import DimensionalNozzleShapes, NozzleShape, NozzleShapes
 
 MixingSolution = Literal["subsonic", "supersonic"]
 MixingSolutionOverride = Literal["subsonic"]
@@ -33,14 +34,14 @@ class _CorrectedExit:
     :ivar float momentum: Final momentum thickness in nozzle coordinates.
     :ivar float first_extension: First added suction-wall straight length.
     :ivar float second_extension: Second added suction-wall straight length.
-    :ivar float spacing_increment: Exit-pitch increase produced by BL growth.
+    :ivar float nozzle_passage_pitch_increment: Exit passage-pitch increase produced by BL growth.
     """
 
     displacement: float
     momentum: float
     first_extension: float
     second_extension: float
-    spacing_increment: float
+    nozzle_passage_pitch_increment: float
 
 
 @dataclass(frozen=True)
@@ -55,13 +56,11 @@ class _StatorEvaluation:
     :ivar NozzleShape corrected: BL-corrected nozzle contour.
     :ivar BoundaryLayerResult pressure_boundary_layer: Pressure-side BL at geometry stations.
     :ivar BoundaryLayerResult suction_boundary_layer: Suction-side BL at geometry stations.
-    :ivar BoundaryLayerResult pressure_boundary_layer_marching: Alias of the pressure-side BL result.
-    :ivar BoundaryLayerResult suction_boundary_layer_marching: Alias of the suction-side BL result.
     :ivar _CorrectedExit corrected_exit: BL quantities extrapolated through the exit correction.
-    :ivar dict uncorrected_mixing: AFMIX solutions using inviscid geometry and wall values.
-    :ivar dict corrected_mixing: AFMIX solutions using the corrected exit.
-    :ivar float physical_chord: Dimensional suction-wall chord, m.
-    :ivar float chord_reynolds_number: Reynolds number based on ``physical_chord``.
+    :ivar dict mixing: AFMIX solutions using the corrected exit geometry and trailing-edge thickness.
+    :ivar float dimensional_scale_factor: Metres represented by one nondimensional coordinate unit.
+    :ivar float dimensional_chord: Dimensional suction-wall chord, m.
+    :ivar float chord_reynolds_number: Reynolds number based on ``dimensional_chord``.
     """
 
     ideal_outlet_absolute_flow_mach: float
@@ -72,12 +71,10 @@ class _StatorEvaluation:
     corrected: NozzleShape
     pressure_boundary_layer: BoundaryLayerResult
     suction_boundary_layer: BoundaryLayerResult
-    pressure_boundary_layer_marching: BoundaryLayerResult
-    suction_boundary_layer_marching: BoundaryLayerResult
     corrected_exit: _CorrectedExit
-    uncorrected_mixing: dict[str, dict[str, float | bool]]
-    corrected_mixing: dict[str, dict[str, float | bool]]
-    physical_chord: float
+    mixing: dict[str, dict[str, float | bool]]
+    dimensional_scale_factor: float
+    dimensional_chord: float
     chord_reynolds_number: float
 
 
@@ -141,15 +138,22 @@ class SupersonicStatorNozzle:
     direction.  ``requested_outlet_absolute_flow_mach`` is the absolute Mach number because a stator is
     stationary.
 
+    Mean radius, partial admission, and nozzle count establish the dimensional
+    total pitch. The ratio ``trailing_edge_thickness_over_total_pitch`` then
+    separates that pitch into open nozzle passage and trailing-edge metal.
+    This pitch-based scale dimensionalizes both stored geometries.
+
     The mass-flow calculation assumes a choked, calorically perfect ideal gas
     at the geometric throat. For the MOC contour, ``throat_height`` is the
-    out-of-plane blade span and the calculated ``throat_width`` is the opening
-    of one rectangular two-dimensional passage:
+    out-of-plane blade span and the dimensional uncorrected ``throat_width``
+    is the opening of one rectangular two-dimensional passage:
 
     ``total area = nozzle_count * throat_height * throat_width``.
 
-    For the axisymmetric conical contour, one-nozzle throat area is
-    ``pi * throat_diameter**2 / 4``. No ``throat_height`` is used.
+    For the axisymmetric conical contour, the two-dimensional throat width is
+    its diameter and one-nozzle throat area is ``pi * throat_width**2 / 4``.
+    No ``throat_height`` is used. Total throat area and the choked isentropic
+    relation determine ``mass_flow_rate`` as an output.
 
     :param float requested_outlet_absolute_flow_mach: Absolute Mach target. By default this is the
         uniform ideal Mach after the diverging characteristic region and
@@ -159,17 +163,17 @@ class SupersonicStatorNozzle:
         measured from the machine axial direction, degrees. By default this is
         the ideal premixing direction. With ``iterate_outlet_metal_angle=True``
         it is the desired real aftermixed direction.
-    :param float mass_flow_rate: Total stator mass flow, kg/s.
     :param int nozzle_count: Number of equal stator nozzles.
+    :param float mean_radius: Turbine mean radius used to calculate admitted perimeter, m.
     :param Fluid fluid: CoolProp-backed ideal-gas mixture.
     :param float upstream_total_temperature: Stator upstream total temperature, K.
     :param float upstream_total_pressure: Stator upstream total pressure, Pa.
     :param float | None throat_height: Out-of-plane throat height, m. Required
         only for the rectangular MOC passage and invalid for the circular conical nozzle.
-    :param float trailing_edge_thickness: Physical trailing-edge thickness,
-        m.  NASA TM X-2343 treats this as blockage in ``AFMIX``; it does not
-        modify the method-of-characteristics contour.  The default zero
-        retains the sharp trailing-edge mixing model.
+    :param float partial_admission_fraction: Fraction of the turbine perimeter occupied by nozzles, in ``(0, 1]``.
+    :param float trailing_edge_thickness_over_total_pitch: Uncorrected trailing-edge metal divided by total pitch.
+        NASA TM X-2343 treats the remaining BL-corrected thickness as blockage in ``AFMIX``. The default zero retains
+        the sharp trailing-edge mixing model.
     :param ContourMethod contour_method: ``"moc"`` for the NASA TM X-1502
         characteristic contour or ``"conical"`` for an axisymmetric straight-wall de Laval contour.
     :param float | None half_cone_metal_angle: Divergent-wall half angle from
@@ -203,13 +207,14 @@ class SupersonicStatorNozzle:
 
     def __init__(self, *, requested_outlet_absolute_flow_mach: float,
         requested_outlet_absolute_flow_angle: float,
-        mass_flow_rate: float,
         nozzle_count: int,
+        mean_radius: float,
         fluid: Fluid,
         upstream_total_temperature: float,
         upstream_total_pressure: float,
         throat_height: float | None = None,
-        trailing_edge_thickness: float = 0.0,
+        partial_admission_fraction: float = 1.0,
+        trailing_edge_thickness_over_total_pitch: float = 0.0,
         contour_method: ContourMethod = "moc",
         half_cone_metal_angle: float | None = None,
         number_of_nodes: int = 101,
@@ -235,13 +240,14 @@ class SupersonicStatorNozzle:
         # keeps MOC-only and conical-only input errors close to the user call.
         self._validate_inputs(requested_outlet_absolute_flow_mach=requested_outlet_absolute_flow_mach,
             requested_outlet_absolute_flow_angle=requested_outlet_absolute_flow_angle,
-            mass_flow_rate=mass_flow_rate,
             nozzle_count=nozzle_count,
+            mean_radius=mean_radius,
             throat_height=throat_height,
             fluid=fluid,
             upstream_total_temperature=upstream_total_temperature,
             upstream_total_pressure=upstream_total_pressure,
-            trailing_edge_thickness=trailing_edge_thickness,
+            partial_admission_fraction=partial_admission_fraction,
+            trailing_edge_thickness_over_total_pitch=trailing_edge_thickness_over_total_pitch,
             contour_method=contour_method,
             half_cone_metal_angle=half_cone_metal_angle,
             number_of_nodes=number_of_nodes,
@@ -253,13 +259,14 @@ class SupersonicStatorNozzle:
             mixing_solution=mixing_solution)
         self.requested_outlet_absolute_flow_mach = float(requested_outlet_absolute_flow_mach)
         self.requested_outlet_absolute_flow_angle = float(requested_outlet_absolute_flow_angle)
-        self.mass_flow_rate = float(mass_flow_rate)
         self.nozzle_count = int(nozzle_count)
+        self.mean_radius = float(mean_radius)
         self.throat_height = None if throat_height is None else float(throat_height)
         self.fluid = fluid
         self.upstream_total_temperature = float(upstream_total_temperature)
         self.upstream_total_pressure = float(upstream_total_pressure)
-        self.trailing_edge_thickness = float(trailing_edge_thickness)
+        self.partial_admission_fraction = float(partial_admission_fraction)
+        self.trailing_edge_thickness_over_total_pitch = float(trailing_edge_thickness_over_total_pitch)
         self.contour_method = contour_method
         self.half_cone_metal_angle = None if half_cone_metal_angle is None else float(half_cone_metal_angle)
         self.number_of_nodes = int(number_of_nodes)
@@ -279,35 +286,17 @@ class SupersonicStatorNozzle:
         self.gamma = float(self.throat_static_fluid_state.gamma)
         self.prandtl_number = float(self.throat_static_fluid_state.prandtl_number)
 
-        # NASA's choked mass-flow relation is written as mass flux times area.
-        # The operating point fixes total throat area. Dividing by nozzle
-        # count then gives either a rectangular MOC passage area or the
-        # circular area of one axisymmetric conical nozzle.
+        # The mean-radius circumference and admission fraction fix the dimensional total pitch before any geometry
+        # trial. The nozzle contour and metal-thickness ratio determine the dimensional coordinate scale.
+        self.dimensional_admitted_perimeter = \
+            2.0 * math.pi * self.mean_radius * self.partial_admission_fraction
+        self.dimensional_total_pitch = self.dimensional_admitted_perimeter / self.nozzle_count
+
+        # The choked isentropic relation supplies mass flux. Total area and mass flow follow after the final contour
+        # has been dimensionalized from pitch.
         choked_mass_flux = (self.upstream_total_pressure / math.sqrt(self.upstream_total_temperature)
             * math.sqrt(self.gamma / self.fluid.specific_gas_constant)
             * (2.0 / (self.gamma + 1.0)) ** ((self.gamma + 1.0) / (2.0 * (self.gamma - 1.0))))
-        self.total_throat_area = self.mass_flow_rate / choked_mass_flux
-        self.single_nozzle_throat_area = self.total_throat_area / self.nozzle_count
-        if self.contour_method == "moc":
-            self.throat_width = self.single_nozzle_throat_area / self.throat_height
-            self.throat_diameter = None
-            self.throat_radius = None
-            self.throat_half_width_scale = 0.5 * self.throat_width
-            self.coordinate_scale_length = self.throat_half_width_scale
-            self.trailing_edge_thickness_over_throat_half_width = \
-                (self.trailing_edge_thickness / self.throat_half_width_scale)
-            self.trailing_edge_thickness_over_throat_diameter = None
-        else:
-            self.throat_width = None
-            self.throat_diameter = math.sqrt(4.0 * self.single_nozzle_throat_area / math.pi)
-            self.throat_radius = 0.5 * self.throat_diameter
-            self.throat_half_width_scale = None
-            # Conical coordinates are deliberately divided by D*, so every
-            # nondimensional coordinate is multiplied by D* here.
-            self.coordinate_scale_length = self.throat_diameter
-            self.trailing_edge_thickness_over_throat_half_width = None
-            self.trailing_edge_thickness_over_throat_diameter = self.trailing_edge_thickness / self.throat_diameter
-        self.trailing_edge_thickness_over_coordinate_scale = self.trailing_edge_thickness / self.coordinate_scale_length
         self.mass_flux_at_throat = choked_mass_flux
 
         self._evaluation_cache: dict[tuple[float, float], _StatorEvaluation] = {}
@@ -321,7 +310,7 @@ class SupersonicStatorNozzle:
                 if self.iterate_outlet_metal_angle else self.requested_outlet_absolute_flow_angle)
         evaluation = self._evaluate(outlet_metal_angle, ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach)
 
-        selected_solution, selected = self._select_mixing_result(evaluation.corrected_mixing)
+        selected_solution, selected = self._select_mixing_result(evaluation.mixing)
         if not bool(selected["available"]):
             raise StatorDesignConvergenceError("the selected stator aftermixing solution is unavailable")
 
@@ -330,25 +319,11 @@ class SupersonicStatorNozzle:
         # The uniform premixing stator flow is aligned with the nozzle metal,
         # but both quantities remain separately addressable.
         self.ideal_outlet_absolute_flow_angle = float(evaluation.ideal_outlet_absolute_flow_angle)
-        if self.contour_method == "conical":
-            self.required_exit_area_ratio = float(isentropic_area_ratio(self.ideal_outlet_absolute_flow_mach,
-                                                                        self.gamma))
-            self.ideal_exit_area_ratio = self.required_exit_area_ratio
-        else:
-            # The MOC wall is set by its characteristic net, not by a
-            # quasi-one-dimensional area ratio.
-            self.required_exit_area_ratio = None
-            self.ideal_exit_area_ratio = None
-        self.uncorrected_shape = evaluation.ideal
-        self.corrected_shape = evaluation.corrected
+        self.nondimensional_shapes: NozzleShapes = \
+            NozzleShapes(uncorrected=evaluation.ideal, corrected=evaluation.corrected)
         self.pressure_boundary_layer = evaluation.pressure_boundary_layer
         self.suction_boundary_layer = evaluation.suction_boundary_layer
-        self.pressure_boundary_layer_marching = evaluation.pressure_boundary_layer_marching
-        self.suction_boundary_layer_marching = evaluation.suction_boundary_layer_marching
-        self.boundary_layer_pressure_station_count = len(self.pressure_boundary_layer_marching.s_over_chord)
-        self.boundary_layer_suction_station_count = len(self.suction_boundary_layer_marching.s_over_chord)
-        self.uncorrected_mixing_results = evaluation.uncorrected_mixing
-        self.mixing_results = evaluation.corrected_mixing
+        self.mixing_results = evaluation.mixing
         self.mixing_solution = selected_solution
         self.real_outlet_absolute_flow_angle = float(selected["real_outlet_absolute_flow_angle"])
         self.real_outlet_absolute_flow_mach = float(selected["real_outlet_absolute_flow_mach"])
@@ -358,17 +333,44 @@ class SupersonicStatorNozzle:
         self.contour_point_count = evaluation.construction.contour_point_count
         self.pressure_number_of_nodes = evaluation.construction.pressure_point_count
         self.actual_flow_turning_increment = evaluation.construction.actual_flow_turning_increment
+
+        # Store the isentropic design ratio separately from the ratios measured on the uncorrected and corrected
+        # geometries. For the planar MOC nozzle, area is proportional to passage width. For the axisymmetric conical
+        # nozzle, the width represents diameter and area is proportional to its square.
+        self.nondimensional_ideal_exit_area_ratio = float(
+            isentropic_area_ratio(self.ideal_outlet_absolute_flow_mach, self.gamma))
+        area_ratio_exponent = 1 if self.contour_method == "moc" else 2
+        uncorrected = self.nondimensional_shapes.uncorrected
+        corrected = self.nondimensional_shapes.corrected
+        self.nondimensional_uncorrected_exit_area_ratio = (
+            uncorrected.nozzle_exit_width / uncorrected.throat_width) ** area_ratio_exponent
+        self.nondimensional_corrected_exit_area_ratio = (
+            corrected.nozzle_exit_width / corrected.throat_width) ** area_ratio_exponent
+        self.nondimensional_uncorrected_trailing_edge_thickness_over_total_pitch = (
+            uncorrected.trailing_edge_thickness / uncorrected.total_pitch)
+        self.nondimensional_corrected_trailing_edge_thickness_over_total_pitch = (
+            corrected.trailing_edge_thickness / corrected.total_pitch)
+        if uncorrected.trailing_edge_thickness > 0.0 and corrected.trailing_edge_thickness == 0.0:
+            warnings.warn(
+                "boundary-layer correction consumed the complete stator trailing-edge thickness; "
+                "the corrected aftermixing model uses zero remaining metal blockage",
+                RuntimeWarning,
+                stacklevel=2)
+
         if self.contour_method == "conical":
-            self.conical_divergent_length_over_throat_diameter = float(self.uncorrected_shape.pressure_surface.x[-1])
-            self.conical_divergent_length = self.conical_divergent_length_over_throat_diameter * self.throat_diameter
+            self.nondimensional_conical_divergent_length = float(uncorrected.pressure_surface.x[-1])
+            self.dimensional_conical_divergent_length = (
+                self.nondimensional_conical_divergent_length * evaluation.dimensional_scale_factor)
         else:
-            self.conical_divergent_length_over_throat_diameter = None
-            self.conical_divergent_length = None
-        self.physical_chord = evaluation.physical_chord
+            self.nondimensional_conical_divergent_length = None
+            self.dimensional_conical_divergent_length = None
+        self.dimensional_scale_factor = evaluation.dimensional_scale_factor
+        self.dimensional_chord = evaluation.dimensional_chord
         self.chord_reynolds_number = evaluation.chord_reynolds_number
-        self.corrected_exit_displacement_thickness = \
-            evaluation.corrected_exit.displacement * self.coordinate_scale_length
-        self.corrected_exit_momentum_thickness = evaluation.corrected_exit.momentum * self.coordinate_scale_length
+        self.dimensional_corrected_exit_displacement_thickness = (
+            evaluation.corrected_exit.displacement * self.dimensional_scale_factor)
+        self.dimensional_corrected_exit_momentum_thickness = (
+            evaluation.corrected_exit.momentum * self.dimensional_scale_factor)
 
         # The physical scale is known at initialization, unlike the rotor
         # scale that can be supplied later.  Store both dimensional shapes
@@ -376,6 +378,16 @@ class SupersonicStatorNozzle:
         # idempotent public method.
         self.dimensional_shapes: DimensionalNozzleShapes
         self.dimensionalize()
+
+        # Use the final uncorrected dimensional throat because its effective area is the inviscid choked design area.
+        # The corrected throat width remains available as a geometric BL-correction diagnostic.
+        dimensional_uncorrected = self.dimensional_shapes.uncorrected
+        if self.contour_method == "moc":
+            self.dimensional_single_nozzle_throat_area = dimensional_uncorrected.throat_width * self.throat_height
+        else:
+            self.dimensional_single_nozzle_throat_area = math.pi * dimensional_uncorrected.throat_width**2 / 4.0
+        self.dimensional_total_throat_area = self.nozzle_count * self.dimensional_single_nozzle_throat_area
+        self.mass_flow_rate = self.mass_flux_at_throat * self.dimensional_total_throat_area
 
     @staticmethod
     def _validate_inputs(**values) -> None:
@@ -387,14 +399,17 @@ class SupersonicStatorNozzle:
         :raises ValueError: If a value or model-dependent option is invalid.
         """
 
-        positive_floats = ("mass_flow_rate", "upstream_total_temperature", "upstream_total_pressure")
+        positive_floats = ("mean_radius", "upstream_total_temperature", "upstream_total_pressure")
         for name in positive_floats:
             value = values[name]
             if not math.isfinite(value) or value <= 0.0:
                 raise ValueError(f"{name} must be positive and finite")
-        trailing_edge_thickness = values["trailing_edge_thickness"]
-        if not math.isfinite(trailing_edge_thickness) or trailing_edge_thickness < 0.0:
-            raise ValueError("trailing_edge_thickness must be nonnegative and finite")
+        partial_admission_fraction = values["partial_admission_fraction"]
+        if not math.isfinite(partial_admission_fraction) or not 0.0 < partial_admission_fraction <= 1.0:
+            raise ValueError("partial_admission_fraction must be finite and in (0, 1]")
+        thickness_ratio = values["trailing_edge_thickness_over_total_pitch"]
+        if not math.isfinite(thickness_ratio) or not 0.0 <= thickness_ratio < 1.0:
+            raise ValueError("trailing_edge_thickness_over_total_pitch must be finite and in [0, 1)")
         if (not math.isfinite(values["requested_outlet_absolute_flow_mach"]) or
                 values["requested_outlet_absolute_flow_mach"] <= 0.0):
             raise ValueError("requested_outlet_absolute_flow_mach must be positive and finite")
@@ -419,9 +434,7 @@ class SupersonicStatorNozzle:
                 raise ValueError("half_cone_metal_angle is only valid for contour_method='conical'")
         else:
             if values["throat_height"] is not None:
-                raise ValueError("throat_height is only valid for "
-                    "contour_method='moc'; circular conical nozzles "
-                    "derive throat_diameter from area")
+                raise ValueError("throat_height is only valid for contour_method='moc'")
             if half_cone_metal_angle is None:
                 raise ValueError("contour_method='conical' requires half_cone_metal_angle")
             if not (math.isfinite(half_cone_metal_angle) and 0.0 < half_cone_metal_angle < 90.0):
@@ -535,18 +548,26 @@ class SupersonicStatorNozzle:
                 half_cone_metal_angle=float(self.half_cone_metal_angle),
                 number_of_nodes=self.number_of_nodes,
                 gamma=self.gamma)
-        ideal = construction.shape
-
-        physical_chord = ideal.chord * self.coordinate_scale_length
+        # Split the nondimensional periodic pitch into open passage and trailing-edge metal. The dimensional total
+        # pitch is fixed by mean radius and partial admission, so this establishes the trial coordinate scale.
+        raw_shape = construction.shape
+        nondimensional_total_pitch = \
+            raw_shape.nozzle_passage_pitch / (1.0 - self.trailing_edge_thickness_over_total_pitch)
+        nondimensional_trailing_edge_thickness = nondimensional_total_pitch - raw_shape.nozzle_passage_pitch
+        ideal = replace(raw_shape, total_pitch=nondimensional_total_pitch,
+                        trailing_edge_thickness=nondimensional_trailing_edge_thickness)
+        dimensional_scale_factor = self.dimensional_total_pitch / nondimensional_total_pitch
+        dimensional_chord = ideal.chord * dimensional_scale_factor
         throat_velocity = self.throat_static_fluid_state.speed_of_sound
-        chord_reynolds_number = throat_velocity * physical_chord / self.throat_static_fluid_state.kinematic_viscosity
+        chord_reynolds_number = \
+            throat_velocity * dimensional_chord / self.throat_static_fluid_state.kinematic_viscosity
 
         # The BL equations use thicknesses normalized by the physical trial chord. Convert the optional dimensional
         # throat inputs once before applying the same starting state to the common wall march.
         initial_displacement_ratio = (None if self.initial_turbulent_displacement_thickness is None
-                                      else self.initial_turbulent_displacement_thickness / physical_chord)
+                                      else self.initial_turbulent_displacement_thickness / dimensional_chord)
         initial_momentum_ratio = (None if self.initial_turbulent_momentum_thickness is None
-                                  else self.initial_turbulent_momentum_thickness / physical_chord)
+                                  else self.initial_turbulent_momentum_thickness / dimensional_chord)
 
         # Both walls of the unrotated NASA TM X-1502 nozzle share the same symmetric
         # contour.  The original program marched one BL along the upper wall;
@@ -567,8 +588,6 @@ class SupersonicStatorNozzle:
             laminar_correlation_limit=0.16)
 
         pressure_boundary_layer = _slice_boundary_layer(suction_boundary_layer, construction.pressure_point_count)
-        pressure_boundary_layer_marching = pressure_boundary_layer
-        suction_boundary_layer_marching = suction_boundary_layer
         corrected, corrected_exit = self._correct_shape(ideal=ideal,
             construction=construction,
             boundary_layer=suction_boundary_layer,
@@ -577,18 +596,10 @@ class SupersonicStatorNozzle:
         pressure_index = construction.pressure_point_count - 1
         displacement = suction_boundary_layer.displacement_thickness_over_chord * ideal.chord
         momentum = suction_boundary_layer.momentum_thickness_over_chord * ideal.chord
-        uncorrected_mixing = self._aftermixing(ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
+        mixing = self._aftermixing(ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
             ideal_outlet_absolute_flow_angle=ideal_outlet_absolute_flow_angle,
-            spacing=ideal.spacing,
-            trailing_edge_thickness=self.trailing_edge_thickness_over_coordinate_scale,
-            pressure_displacement=float(displacement[pressure_index]),
-            suction_displacement=float(displacement[-1]),
-            pressure_momentum=float(momentum[pressure_index]),
-            suction_momentum=float(momentum[-1]))
-        corrected_mixing = self._aftermixing(ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
-            ideal_outlet_absolute_flow_angle=ideal_outlet_absolute_flow_angle,
-            spacing=corrected.spacing,
-            trailing_edge_thickness=self.trailing_edge_thickness_over_coordinate_scale,
+            nozzle_passage_pitch=corrected.nozzle_passage_pitch,
+            trailing_edge_thickness=corrected.trailing_edge_thickness,
             pressure_displacement=float(displacement[pressure_index]),
             suction_displacement=corrected_exit.displacement,
             pressure_momentum=float(momentum[pressure_index]),
@@ -601,12 +612,10 @@ class SupersonicStatorNozzle:
             corrected=corrected,
             pressure_boundary_layer=pressure_boundary_layer,
             suction_boundary_layer=suction_boundary_layer,
-            pressure_boundary_layer_marching=pressure_boundary_layer_marching,
-            suction_boundary_layer_marching=suction_boundary_layer_marching,
             corrected_exit=corrected_exit,
-            uncorrected_mixing=uncorrected_mixing,
-            corrected_mixing=corrected_mixing,
-            physical_chord=physical_chord,
+            mixing=mixing,
+            dimensional_scale_factor=dimensional_scale_factor,
+            dimensional_chord=dimensional_chord,
             chord_reynolds_number=chord_reynolds_number)
         self._evaluation_cache[key] = evaluation
         return evaluation
@@ -669,7 +678,7 @@ class SupersonicStatorNozzle:
         if abs(closing_sine) <= 1.0e-10:
             raise BoundaryLayerError("corrected nozzle exit geometry is singular")
         displacement_difference = displacement_1 - displacement[pressure_index]
-        spacing_increment = math.cos(growth_angle) * displacement_difference / closing_sine
+        nozzle_passage_pitch_increment = math.cos(growth_angle) * displacement_difference / closing_sine
         auxiliary = math.sin(outlet_metal_angle_rad) * displacement_difference / closing_sine
         second_extension = auxiliary * math.cos(growth_angle)
         displacement_2 = displacement_1 + second_extension * math.tan(growth_angle)
@@ -689,22 +698,27 @@ class SupersonicStatorNozzle:
             np.concatenate((suction_absolute_flow_mach,
                             [suction_absolute_flow_mach[-1], suction_absolute_flow_mach[-1]]))
 
-        corrected_spacing = (2.0 * (pressure_exit_y + displacement[pressure_index]) / math.cos(outlet_metal_angle_rad)
-            + spacing_increment)
+        corrected_nozzle_passage_pitch = (
+            2.0 * (pressure_exit_y + displacement[pressure_index]) / math.cos(outlet_metal_angle_rad)
+            + nozzle_passage_pitch_increment)
+        corrected_trailing_edge_thickness = max(0.0, ideal.total_pitch - corrected_nozzle_passage_pitch)
         corrected = NozzleShape(pressure_surface=_surface(pressure_x, pressure_y, pressure_absolute_flow_mach),
                                 suction_surface=_surface(suction_x, suction_y, suction_absolute_flow_mach),
                                 chord=float(suction_x[-1]),
                                 throat_width=ideal.throat_width + 2.0 * displacement[0],
-                                exit_opening=2.0 * (pressure_exit_y + displacement[pressure_index]),
-                                spacing=corrected_spacing, coordinate_scale=ideal.coordinate_scale)
+                                nozzle_exit_width=2.0 * (pressure_exit_y + displacement[pressure_index]),
+                                nozzle_passage_pitch=corrected_nozzle_passage_pitch,
+                                total_pitch=ideal.total_pitch,
+                                trailing_edge_thickness=corrected_trailing_edge_thickness,
+                                coordinate_scale=ideal.coordinate_scale)
         return corrected, _CorrectedExit(displacement=float(displacement_2), momentum=float(momentum_2),
                                          first_extension=float(first_extension),
                                          second_extension=float(second_extension),
-                                         spacing_increment=float(spacing_increment))
+                                         nozzle_passage_pitch_increment=float(nozzle_passage_pitch_increment))
 
     def _aftermixing(self, *, ideal_outlet_absolute_flow_mach: float,
         ideal_outlet_absolute_flow_angle: float,
-        spacing: float,
+        nozzle_passage_pitch: float,
         trailing_edge_thickness: float,
         pressure_displacement: float,
         suction_displacement: float,
@@ -714,8 +728,8 @@ class SupersonicStatorNozzle:
 
         :param float ideal_outlet_absolute_flow_mach: Uniform inviscid exit Mach before mixing.
         :param float ideal_outlet_absolute_flow_angle: Ideal premixing absolute flow angle, degrees.
-        :param float spacing: Pitch between corresponding nozzles in the current coordinate scale.
-        :param float trailing_edge_thickness: Trailing-edge thickness in the same coordinate scale.
+        :param float nozzle_passage_pitch: Open circumferential nozzle pitch in the current coordinate scale.
+        :param float trailing_edge_thickness: Circumferential trailing-edge thickness in the same coordinate scale.
         :param float pressure_displacement: Pressure-side exit displacement thickness.
         :param float suction_displacement: Suction-side exit displacement thickness.
         :param float pressure_momentum: Pressure-side exit momentum thickness.
@@ -731,20 +745,20 @@ class SupersonicStatorNozzle:
         absolute_flow_angle_rad = math.radians(ideal_outlet_absolute_flow_angle)
         velocity_ratio = math.sqrt((0.5 * gp * ideal_outlet_absolute_flow_mach**2) \
                                    / (1.0 + 0.5 * gm * ideal_outlet_absolute_flow_mach**2))
-        projected_spacing = spacing * math.cos(absolute_flow_angle_rad)
-        if projected_spacing <= 0.0:
-            raise BoundaryLayerError("nozzle exit spacing has no positive axial projection")
+        projected_nozzle_passage_pitch = nozzle_passage_pitch * math.cos(absolute_flow_angle_rad)
+        if projected_nozzle_passage_pitch <= 0.0:
+            raise BoundaryLayerError("nozzle exit pitch has no positive axial projection")
 
-        displacement_ratio = (pressure_displacement + suction_displacement) / projected_spacing
-        momentum_ratio = (pressure_momentum + suction_momentum) / projected_spacing
+        displacement_ratio = (pressure_displacement + suction_displacement) / projected_nozzle_passage_pitch
+        momentum_ratio = (pressure_momentum + suction_momentum) / projected_nozzle_passage_pitch
 
-        # These are the FORTRAN AFMIX variables DTE, A, and A1.  TE and SP
-        # are expressed in the same units, and XX = SP*cos(ALPH1) is the
-        # pitch projected onto the plane normal to the axial direction.
+        # These are the FORTRAN AFMIX variables DTE, A, and A1. Both the circumferential nozzle pitch and metal
+        # thickness are projected normal to the nozzle flow direction, so their blockage ratio is unchanged.
         # The trailing edge removes both flow area (A1) and momentum area
         # (A); boundary-layer momentum thickness is additionally removed
         # only from A.
-        trailing_edge_blockage_ratio = trailing_edge_thickness / projected_spacing
+        projected_trailing_edge_thickness = trailing_edge_thickness * math.cos(absolute_flow_angle_rad)
+        trailing_edge_blockage_ratio = projected_trailing_edge_thickness / projected_nozzle_passage_pitch
         effective_momentum_area = 1.0 - displacement_ratio - trailing_edge_blockage_ratio - momentum_ratio
         effective_area = 1.0 - displacement_ratio - trailing_edge_blockage_ratio
         if effective_momentum_area <= 0.0 or effective_area <= 0.0:
@@ -800,8 +814,8 @@ class SupersonicStatorNozzle:
         :raises StatorDesignConvergenceError: If the selected mixing solution is unavailable.
         """
 
-        mixing = self._evaluate(outlet_metal_angle,
-                                ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach).corrected_mixing
+        mixing = self._evaluate(
+            outlet_metal_angle, ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach).mixing
         _, result = self._select_mixing_result(mixing)
         if not bool(result["available"]):
             raise StatorDesignConvergenceError("selected aftermixing solution is unavailable at this angle")
@@ -877,8 +891,8 @@ class SupersonicStatorNozzle:
 
             outlet_metal_angle = float(values[0])
             ideal_outlet_absolute_flow_mach = float(values[1])
-            mixing = self._evaluate(outlet_metal_angle,
-                ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach).corrected_mixing
+            mixing = self._evaluate(
+                outlet_metal_angle, ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach).mixing
             _, selected = self._select_mixing_result(mixing)
             if not bool(selected["available"]):
                 raise StatorDesignConvergenceError("selected aftermixing solution is unavailable")
@@ -919,25 +933,22 @@ class SupersonicStatorNozzle:
             f"Mach residual={final_residual[1]:.6g}")
 
     def dimensionalize(self) -> DimensionalNozzleShapes:
-        """Store both shapes in metres using the mode-specific throat scale.
+        """Store both shapes in metres using the pitch-derived scale factor.
 
-        :return: Ideal and corrected nozzle surfaces in metres with throat metadata.
+        :return: Uncorrected and corrected nozzle geometries in metres with machine-scale metadata.
         :rtype: DimensionalNozzleShapes
         """
 
-        result = DimensionalNozzleShapes(total_throat_area=self.total_throat_area,
-            single_nozzle_throat_area=self.single_nozzle_throat_area,
+        result = DimensionalNozzleShapes(
+            mean_radius=self.mean_radius,
+            partial_admission_fraction=self.partial_admission_fraction,
             nozzle_count=self.nozzle_count,
-            throat_height=self.throat_height,
-            ideal_throat_width=self.throat_width,
-            ideal_throat_diameter=self.throat_diameter,
-            coordinate_scale_length=self.coordinate_scale_length,
-            throat_half_width_scale=self.throat_half_width_scale,
-            uncorrected=self.uncorrected_shape.scaled(self.coordinate_scale_length, "dimensional [m]"),
-            corrected=self.corrected_shape.scaled(self.coordinate_scale_length, "dimensional [m]"))
+            dimensional_scale_factor=self.dimensional_scale_factor,
+            uncorrected=self.nondimensional_shapes.uncorrected.scaled(
+                self.dimensional_scale_factor, "dimensional [m]"),
+            corrected=self.nondimensional_shapes.corrected.scaled(
+                self.dimensional_scale_factor, "dimensional [m]"))
         self.dimensional_shapes = result
-        self.uncorrected_dimensional_shape = result.uncorrected
-        self.corrected_dimensional_shape = result.corrected
         return result
 
     @staticmethod
@@ -979,8 +990,8 @@ class SupersonicStatorNozzle:
             corrected = self.dimensional_shapes.corrected.scaled(1000.0, "dimensional [mm]")
             axis_label = "length [mm]"
         else:
-            ideal = self.uncorrected_shape
-            corrected = self.corrected_shape
+            ideal = self.nondimensional_shapes.uncorrected
+            corrected = self.nondimensional_shapes.corrected
             axis_label = \
                 "coordinate / throat diameter" if self.contour_method == "conical" else "coordinate / throat half-width"
 

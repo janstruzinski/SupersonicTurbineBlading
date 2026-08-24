@@ -51,7 +51,7 @@ from SupersonicTurbineBlading import Fluid, SupersonicRotorBlade, SupersonicStat
 |---|---|
 | `Fluid` | Defines a fixed gas composition and returns properties from pure-fluid CoolProp calls. |
 | `SupersonicRotorBlade` | Designs and scales a vortex-flow rotor section from absolute or relative flow inputs. |
-| `SupersonicStatorNozzle` | Sizes the throat and designs a planar MOC or axisymmetric conical nozzle. |
+| `SupersonicStatorNozzle` | Scales and designs a planar MOC or axisymmetric conical nozzle. |
 
 Construction of a rotor or stator object performs the complete selected design. Results are therefore available as
 properties immediately after initialization.
@@ -63,6 +63,7 @@ The package also exposes result containers useful in engineering scripts:
 | `FluidState` | Thermodynamic and transport properties at one temperature and pressure.                    |
 | `SurfaceCoordinates` | Coordinates, framed flow-Mach array and surface `metal_angle`.                              |
 | `BladeShape`, `NozzleShape` | `pressure_surface`, `suction_surface` and nondimensional passage dimensions. |
+| `BladeShapes`, `NozzleShapes` | Paired uncorrected and BL-corrected geometries in one coordinate scale. |
 | `DimensionalBladeShapes`, `DimensionalNozzleShapes` | Geometry in metres. |
 | `BoundaryLayerResult` | Boundary-layer thicknesses, freestream flow Mach and transition or separation data.        |
 | `FlowStateTable` | Printable comparison of the principal rotor flow states in both reference frames. |
@@ -275,7 +276,7 @@ print(blade.outlet_metal_angle)
 print(blade.flow_state_table)
 
 # Ideal coordinates divided by r*
-ideal_shape = blade.uncorrected_shape
+ideal_shape = blade.nondimensional_shapes.uncorrected
 pressure_x = ideal_shape.pressure_surface.x
 pressure_y = ideal_shape.pressure_surface.y
 pressure_relative_flow_mach = ideal_shape.pressure_surface.relative_flow_mach
@@ -284,7 +285,8 @@ suction_y = ideal_shape.suction_surface.y
 suction_relative_flow_mach = ideal_shape.suction_surface.relative_flow_mach
 
 # Ideal coordinates in metres
-ideal_shape_m = blade.dimensionalize().uncorrected
+blade.dimensionalize()
+ideal_shape_m = blade.dimensional_shapes.uncorrected
 
 # CAD-ready ideal single-blade profile in millimetres
 ideal_profile_x_mm = blade.uncorrected_blade_profile_x_CAD
@@ -331,11 +333,12 @@ Useful properties available after construction include:
 | `ideal_outlet_relative_flow_mach`, `ideal_outlet_relative_flow_angle` | Premixing relative outlet flow state. |
 | `outlet_metal_angle` | Outlet metal angle in the stationary machine frame. |
 | `max_flow_turning_increment` | Largest turning increment between adjacent MOC nodes, in degrees. |
-| `uncorrected_shape` | Ideal surfaces, chord and open pitches in one `BladeShape`.        |
-| `physical_total_pitch`, `physical_passage_pitch` | Total and open inlet pitches in metres. |
-| `sonic_radius_scale`, `physical_chord`, `chord_reynolds_number` | Dimensional scale and inlet-based Reynolds number. |
+| `nondimensional_shapes.uncorrected` | Ideal surfaces, chord and open pitches in one `BladeShape`. |
+| `dimensional_shapes.uncorrected` | The same ideal `BladeShape` in metres after dimensionalization. |
+| `dimensional_total_pitch`, `dimensional_passage_pitch` | Total and open inlet passage pitches in metres. |
+| `sonic_radius_scale`, `dimensional_chord`, `chord_reynolds_number` | Dimensional scale and inlet Reynolds number. |
 | `solidity` | Ideal axial chord divided by total blade pitch. |
-| `leading_edge_thickness`, `physical_leading_edge_thickness` | Nondimensional and dimensional leading-edge thickness. |
+| `leading_edge_thickness`, `dimensional_leading_edge_thickness` | Nondimensional and dimensional LE thickness. |
 | `starting_result` | `StartingResult` when `calculate_starting=True`, otherwise `None`. |
 | `flow_state_table` | Printable inlet-to-outlet comparison of absolute and relative flow angles and Mach numbers. |
 
@@ -530,7 +533,9 @@ The files in `rotor/` have the following roles:
 The principal internal calls are `design_ideal_geometry(...)` in `rotor_geometry.py` and
 `calculate_starting_limit(...)` in `rotor_starting.py`. `SupersonicRotorBlade` supplies them with inputs,
 then exposes their results through the public containers.
-`BladeShape.dimensionalize()` method scales the stored geometry to the final machine size.
+`BladeShape.scaled(...)` returns a geometry-only scaled copy without changing the blade object. The public
+`SupersonicRotorBlade.dimensionalize()` method uses the final pitch scale and stores both dimensional geometries under
+`blade.dimensional_shapes`.
 
 Additional design steps performed by `rotor_blade.py` are documented in the dedicated sections below.
 
@@ -538,9 +543,9 @@ Additional design steps performed by `rotor_blade.py` are documented in the dedi
 
 #### Introduction to the `SupersonicStatorNozzle`
 
-`SupersonicStatorNozzle` designs the supersonic part of a turbine stator passage. It first calculates the total choked
-area from total mass flow and upstream total conditions, allocates that area among `nozzle_count` identical passages,
-and then constructs one of two contours:
+`SupersonicStatorNozzle` designs the supersonic part of a turbine stator passage. Mean radius, partial admission and
+nozzle count first establish the dimensional pitch of one passage. A nondimensional nozzle is then scaled by the ratio
+of dimensional total pitch to nondimensional total pitch. The class constructs one of two contours:
 
 - `contour_method="moc"` creates a two-dimensional, sharp-throat slot nozzle that delivers uniform parallel flow
   at its ideal exit;
@@ -548,7 +553,8 @@ and then constructs one of two contours:
   the requested ideal exit Mach.
 
 The MOC model requires an out-of-plane `throat_height`; each passage has a rectangular throat. The conical model uses a
-circular throat and therefore derives `throat_diameter` directly from the nozzle throat area.
+circular throat, whose diameter is represented by the common `NozzleShape.throat_width` property. The final throat area
+and choked isentropic relation determine `mass_flow_rate` as an output.
 
 `outlet_metal_angle` is measured from the machine axis and stored in the stationary frame. The ideal outlet absolute
 flow angle is stored separately, although the zero-deviation nozzle construction makes the two values numerically
@@ -569,28 +575,31 @@ working_fluid = Fluid(["Nitrogen", "Oxygen"], [0.767, 0.233])
 moc_stator = SupersonicStatorNozzle(
     requested_outlet_absolute_flow_mach=1.77,          # ideal absolute outlet flow Mach in this example
     requested_outlet_absolute_flow_angle=70.0,         # ideal absolute outlet flow angle in this example
-    mass_flow_rate=5.0,                # complete stator row, kg/s
     nozzle_count=30,
+    mean_radius=0.20,                  # turbine mean radius, m
     throat_height=0.05,                # out-of-plane span, m
     fluid=working_fluid,
     upstream_total_temperature=900.0,  # K
     upstream_total_pressure=1.0e6,     # Pa
+    partial_admission_fraction=1.0,     # admitted fraction of the turbine perimeter; default 1.0
+    trailing_edge_thickness_over_total_pitch=0.05,  # nondimensional metal fraction; default 0.0
     contour_method="moc",
     number_of_nodes=101,                # nodes on each MOC/straight segment
 )
 
-print(moc_stator.total_throat_area)
-print(moc_stator.throat_width)
+print(moc_stator.mass_flow_rate)
+print(moc_stator.dimensional_total_throat_area)
+print(moc_stator.dimensional_shapes.uncorrected.throat_width)
 print(moc_stator.actual_flow_turning_increment)
 print(moc_stator.outlet_metal_angle)
 print(moc_stator.ideal_outlet_absolute_flow_angle)
 print(moc_stator.ideal_outlet_absolute_flow_mach)
 
 # Ideal nozzle-axis coordinates divided by throat half-width
-ideal_moc = moc_stator.uncorrected_shape
+ideal_moc = moc_stator.nondimensional_shapes.uncorrected
 
 # Ideal coordinates in metres
-ideal_moc_m = moc_stator.uncorrected_dimensional_shape
+ideal_moc_m = moc_stator.dimensional_shapes.uncorrected
 ```
 
 For the MOC route, `throat_height` is the physical out-of-plane blade span. `number_of_nodes` must be an integer of at
@@ -604,49 +613,61 @@ endpoints of each segment. The resulting characteristic turning increment is sto
 conical_stator = SupersonicStatorNozzle(
     requested_outlet_absolute_flow_mach=1.77,
     requested_outlet_absolute_flow_angle=70.0,
-    mass_flow_rate=5.0,                # total flow through all nozzles, kg/s
     nozzle_count=30,
+    mean_radius=0.20,                  # turbine mean radius, m
     fluid=working_fluid,
     upstream_total_temperature=900.0,  # K
     upstream_total_pressure=1.0e6,     # Pa
+    partial_admission_fraction=1.0,
+    trailing_edge_thickness_over_total_pitch=0.05,
     contour_method="conical",
     half_cone_metal_angle=15.0,
     number_of_nodes=101,                # nodes on each divergent/straight segment
 )
 
-print(conical_stator.single_nozzle_throat_area)
-print(conical_stator.throat_diameter)
-print(conical_stator.required_exit_area_ratio)
-print(conical_stator.conical_divergent_length)
+print(conical_stator.dimensional_single_nozzle_throat_area)
+print(conical_stator.dimensional_shapes.uncorrected.throat_width)  # throat diameter in this 2D section
+print(conical_stator.nondimensional_ideal_exit_area_ratio)
+print(conical_stator.dimensional_conical_divergent_length)
 
 # Ideal meridional coordinates divided by throat diameter
-ideal_conical = conical_stator.uncorrected_shape
-ideal_conical_m = conical_stator.uncorrected_dimensional_shape
+ideal_conical = conical_stator.nondimensional_shapes.uncorrected
+ideal_conical_m = conical_stator.dimensional_shapes.uncorrected
 ```
 
 `half_cone_metal_angle` is the divergent-wall half angle from the nozzle axis and must lie between 0 and 90 degrees.
 `throat_height` must be omitted for this route because it belongs only to the planar MOC model. Conversely,
 `half_cone_metal_angle` must be omitted for a MOC nozzle.
 
-Remaining input variables are documented later. Important base-design properties are:
+For both routes, `mean_radius`, `partial_admission_fraction` and `nozzle_count` determine the dimensional total pitch.
+The input `trailing_edge_thickness_over_total_pitch` divides each uncorrected total pitch into the open nozzle pitch
+and trailing-edge metal. Remaining BL and iterative inputs are documented later. Important base-design properties are:
 
 | Property | Engineering interpretation                                           |
 |---|----------------------------------------------------------------------|
 | `gamma`, `throat_static_temperature`, `throat_static_pressure` | Fluid state at the throat. |
-| `mass_flux_at_throat`, `total_throat_area` | Choked mass flux and total stator throat area.                       |
-| `single_nozzle_throat_area` | Choked area assigned to one passage.                                 |
-| `throat_width` | Rectangular opening of one MOC passage; `None` for a conical nozzle. |
-| `throat_diameter`, `throat_radius` | Circular conical throat size; `None` for an MOC nozzle.              |
+| `mass_flux_at_throat`, `mass_flow_rate` | Choked mass flux and calculated complete-row mass flow. |
+| `dimensional_single_nozzle_throat_area` | Uncorrected choked area of one passage. |
+| `dimensional_total_throat_area` | Sum of the uncorrected throat areas of all nozzles. |
+| `dimensional_admitted_perimeter`, `dimensional_total_pitch` | Admitted arc length and one total pitch, m. |
+| `dimensional_scale_factor` | Metres per nondimensional nozzle-coordinate unit. |
 | `outlet_metal_angle` | Outlet metal angle in the stationary machine frame.                   |
 | `ideal_outlet_absolute_flow_angle` | Uniform premixing absolute flow angle.                              |
 | `ideal_outlet_absolute_flow_mach` | Uniform premixing absolute flow Mach used to construct the contour.  |
-| `uncorrected_shape` | Ideal `NozzleShape` in throat-based nondimensional coordinates.      |
-| `uncorrected_dimensional_shape` | Ideal `NozzleShape` in metres.                                       |
+| `nondimensional_shapes.uncorrected` | Ideal `NozzleShape` in throat-based coordinates. |
+| `dimensional_shapes.uncorrected` | Ideal `NozzleShape` in metres. |
+| `NozzleShape.throat_width` | MOC passage width or conical diameter in the active coordinate scale. |
+| `NozzleShape.nozzle_exit_width` | Width or diameter at the divergent-contour exit. |
+| `NozzleShape.nozzle_passage_pitch`, `NozzleShape.total_pitch` | Open passage pitch and pitch including metal. |
+| `NozzleShape.trailing_edge_thickness` | Metal thickness remaining in that geometry. |
 | `number_of_nodes` | Nodes on each MOC, conical or straight-wall segment. |
 | `contour_point_count`, `pressure_number_of_nodes` | Divergent-contour node counts. |
 | `actual_flow_turning_increment` | Derived MOC characteristic turning increment; `None` for conical nozzles. |
-| `required_exit_area_ratio`, `conical_divergent_length` | da Laval nozzle sizing results; `None` for an MOC nozzle. |
-| `physical_chord`, `chord_reynolds_number` | Physical length and sonic-throat Reynolds scale.                     |
+| `nondimensional_ideal_exit_area_ratio` | Isentropic ratio required by the final ideal exit Mach. |
+| `nondimensional_uncorrected_exit_area_ratio` | Area ratio measured from the ideal contour. |
+| `nondimensional_corrected_exit_area_ratio` | Area ratio measured from the BL-corrected contour. |
+| `dimensional_conical_divergent_length` | Conical divergent length in metres; `None` for an MOC nozzle. |
+| `dimensional_chord`, `chord_reynolds_number` | Dimensional length and sonic-throat Reynolds scale. |
 
 #### Theory of `SupersonicStatorNozzle`
 
@@ -661,14 +682,34 @@ p^{\ast}=p_t\left(\frac{2}{\gamma+1}\right)^{\gamma/(\gamma-1)}$$
 until `fluid.properties(T*, p*)` returns a consistent $\gamma$. That value is then frozen for the contour and
 choked-flow equations.
 
-The total throat area follows from
+The admitted stator arc and dimensional total pitch are
+
+$$L_{\mathrm{adm}}=f_{\mathrm{adm}}2\pi r_m, \qquad
+S_{\mathrm{total}}=\frac{L_{\mathrm{adm}}}{N}.$$
+
+For uncorrected open nozzle pitch $S_{N,u}$ and specified metal fraction $\tau$, the nondimensional pitch identity is
+
+$$S^{\ast}_{\mathrm{total}}=\frac{S^{\ast}_{N,u}}{1-\tau}, \qquad
+t^{\ast}_{\mathrm{TE},u}=S^{\ast}_{\mathrm{total}}-S^{\ast}_{N,u}.$$
+
+The dimensional coordinate scale is therefore
+
+$$k_s=\frac{S_{\mathrm{total}}}{S^{\ast}_{\mathrm{total}}}.$$
+
+Every length in both the uncorrected and corrected contours is multiplied by the same $k_s$. The final uncorrected
+throat width $w^{\ast}$ then determines the physical throat area. For the planar MOC nozzle of height $h$,
+
+$$A^{\ast}_{\mathrm{one}}=(k_s w^{\ast})h.$$
+
+For the conical nozzle, `throat_width` denotes the circular throat diameter and
+
+$$A^{\ast}_{\mathrm{one}}=\frac{\pi(k_s w^{\ast})^2}{4}.$$
+
+The total throat area is $A^{\ast}_{\mathrm{total}}=N A^{\ast}_{\mathrm{one}}$. Mass flow is then calculated from
+the choked isentropic relation
 
 $$\dot m=\frac{A^{\ast}p_t}{\sqrt{T_t}}\sqrt{\frac{\gamma}{R}}
 \left(\frac{2}{\gamma+1}\right)^{\frac{\gamma+1}{2(\gamma-1)}}.$$
-
-The area assigned to one of $N$ identical nozzles is
-
-$$A^{\ast}_{\mathrm{one}}=\frac{A^{\ast}_{\mathrm{total}}}{N}.$$
 
 ##### MOC nozzle
 
@@ -694,17 +735,19 @@ $$\Delta\nu=\frac{\nu_e}{2(N-1)}.$$
 The throat and exit are included in the $N$ stored divergent-wall nodes. The following straight segment also contains
 $N$ nodes including its shared junction with the MOC contour.
 
-The MOC coordinates use a throat half-width of one, so the full nondimensional opening is two. The physical opening is
+The MOC coordinates use a throat half-width of one, so the full nondimensional throat width is two. The pitch-derived
+scale gives the physical opening $w_t=2k_s$. The planar geometric exit area ratio is the width ratio
 
-$$w^{\ast}=\frac{A^{\ast}_{\mathrm{total}}}{Nh},$$
+$$\left(\frac{A_e}{A_t}\right)_{\mathrm{MOC}}=\frac{w_e}{w_t}.$$
 
-where $h$ is `throat_height`; every stored coordinate is multiplied by $w^{\ast}/2$ to scale them to machine size.
+Here $w_e$ is measured where the divergent wall ends and the straight upper wall begins. The ideal area ratio required
+by the final ideal exit Mach is stored separately from this geometric ratio.
 
 After the shaped divergent contour, the suction wall continues as a straight line in the nozzle-axis system. If
 $(x_e,y_e)$ is the end of the nondimensional upper contour and $\alpha_N$ is `outlet_metal_angle`, measured from the
-machine axis, the added straight length and periodic spacing are
+machine axis, the added straight length and open nozzle pitch are
 
-$$L_s=2y_e\tan\alpha_N, \qquad S=\frac{2y_e}{\cos\alpha_N}.$$
+$$L_s=2y_e\tan\alpha_N, \qquad S_N=\frac{2y_e}{\cos\alpha_N}.$$
 
 The converging subsonic portion upstream of the sharp throat is not designed by this class.
 
@@ -715,18 +758,16 @@ The conical route is axisymmetric and uses the perfect-gas area-Mach relation:
 $$\frac{A}{A^{\ast}}=\frac{1}{M}
 \left[\frac{2}{\gamma+1}\left(1+\frac{\gamma-1}{2}M^2\right)\right]^{\frac{\gamma+1}{2(\gamma-1)}}.$$
 
-Circular area scales with radius squared, giving
+Circular area scales with radius or diameter squared, giving
 
-$$\frac{r_e}{r^{\ast}}=\sqrt{\frac{A_e}{A^{\ast}}}.$$
+$$\frac{w_e}{w_t}=\sqrt{\frac{A_e}{A_t}}, \qquad
+\left(\frac{A_e}{A_t}\right)_{\mathrm{conical}}=\left(\frac{w_e}{w_t}\right)^2.$$
 
-The throat diameter is obtained directly from the nozzle choked area:
+The meridional coordinates are normalized by throat diameter. The walls run from $y=\pm0.5$ at the throat to
+$y=\pm0.5\sqrt{A_e/A_t}$ at the exit. The dimensional throat and exit widths are obtained by multiplying these
+nondimensional diameters by $k_s$. For divergent half-angle $\theta_c$,
 
-$$D^{\ast}=\sqrt{\frac{4A^{\ast}_{\mathrm{one}}}{\pi}}.$$
-
-Coordinates are normalized by $D^{\ast}$. The walls run from $y=\pm0.5$ at the throat to
-$y=\pm0.5\sqrt{A_e/A^{\ast}}$ at the exit. For divergent half-angle $\theta_c$,
-
-$$\frac{L_d}{D^{\ast}}=\frac{\sqrt{A_e/A^{\ast}}-1}{2\tan\theta_c}.$$
+$$\frac{L_d}{w_t}=\frac{\sqrt{A_e/A_t}-1}{2\tan\theta_c}.$$
 
 The suction wall has the same straight downstream line as used by the MOC contour. `number_of_nodes` sets the nodes on
 both the conical divergent segment and this straight segment, including their shared junction. At every divergent node,
@@ -739,25 +780,27 @@ BL marching scheme may occur. BL calculations is explained later in the document
 The base stator design follows this sequence:
 
 1. `stator_nozzle.py` validates the contour-specific inputs and gets throat flow state.
-2. The choked mass flux determines total and single nozzle throat areas.
+2. Mean radius, partial admission and nozzle count determine the dimensional total pitch.
 3. For `"moc"`, `stator_geometry.py` builds the fixed-node characteristic net and retains the final wall contour. For
    `"conical"`, it evaluates the area ratio, exit radius and fixed-node straight walls.
-4. The selected throat width or diameter establishes the dimensional coordinate scale.
-5. `stator_results.py` stores the nondimensional and dimensional nozzle shapes.
+4. The total-pitch ratio establishes the dimensional coordinate scale for both contours.
+5. The final dimensional throat area and choked mass flux determine complete-row mass flow.
+6. `stator_results.py` stores the nested nondimensional and dimensional nozzle shapes.
 
 The files in `stator/` have the following roles:
 
 | File | Role |
 |---|---|
-| `stator_nozzle.py` | Public class, throat sizing, contour selection, physical scaling and engineering outputs. |
+| `stator_nozzle.py` | Public class, pitch scaling, contour selection, throat area and engineering outputs. |
 | `stator_geometry.py` | NASA TM X-1502 characteristic construction and the alternative conical de Laval geometry. |
-| `stator_results.py` | `NozzleShape` and `DimensionalNozzleShapes` containers. |
+| `stator_results.py` | `NozzleShape`, `NozzleShapes` and `DimensionalNozzleShapes` containers. |
 
 `design_ideal_stator_nozzle(...)` builds the planar MOC contour and `design_conical_stator_nozzle(...)` builds the
 axisymmetric alternative. Both return an `IdealNozzleConstruction`, which contains a `NozzleShape`.
 `NozzleShape.pressure_surface` and `NozzleShape.suction_surface` contain the two walls.
-`NozzleShape.dimensionalize(...)` scales nozzle to the machine dimensions. Each stator `SurfaceCoordinates` object
-stores `absolute_flow_mach`, while `relative_flow_mach` is `None`. The `metal_angle` array is in degrees.
+`NozzleShape.scaled(...)` returns a geometry-only scaled copy. `SupersonicStatorNozzle.dimensionalize()` applies the
+pitch-derived factor and stores both copies under `dimensional_shapes`. Each stator `SurfaceCoordinates` object stores
+`absolute_flow_mach`, while `relative_flow_mach` is `None`. The `metal_angle` array is in degrees.
 
 Additional nozzle design features of `stator_nozzle.py` are documented below.
 
@@ -839,8 +882,18 @@ y_{\mathrm{suction,corr}}=y_{\mathrm{suction}}+\delta^{\ast}.$$
 
 It is a vertical offset in nozzle-axis coordinates. The suction-side straight wall segment is
 then extended twice: first by displacement thickness at the end of the symmetrical section,
-and second to account for continued thickness growth along the newly created segment. The corrected exit spacing and
-the exit BL thicknesses are retained for the final mixed-out calculation.
+and second to account for continued thickness growth along the newly created segment. The corrected open nozzle pitch
+and the exit BL thicknesses are retained for the final mixed-out calculation.
+
+The correction increases the open nozzle pitch while total pitch remains fixed. The remaining corrected trailing-edge
+metal is therefore
+
+$$t^{\ast}_{\mathrm{TE},c}=\max\left[0,
+S^{\ast}_{\mathrm{total}}-S^{\ast}_{N,c}\right].$$
+
+Equivalently, the BL-induced open-pitch increase is subtracted from the uncorrected trailing-edge thickness. If the
+increase consumes all specified metal, the thickness is limited to zero and the class issues a `RuntimeWarning`. The
+corrected pitch and corrected remaining thickness are the only geometry inputs used by final stator aftermixing.
 
 Stator controls and outputs are:
 
@@ -851,10 +904,10 @@ Stator controls and outputs are:
 | `initial_turbulent_displacement_thickness` | Input throat $\delta^{\ast}$ in fully turbulent mode, in metres.  |
 | `initial_turbulent_momentum_thickness` | Input throat $\theta$ in fully turbulent mode, in metres. |
 | `pressure_boundary_layer`, `suction_boundary_layer` | Results evaluated directly on the nozzle surfaces. |
-| `pressure_boundary_layer_marching`, `suction_boundary_layer_marching` | Aliases of the same stator results. |
-| `corrected_shape`, `corrected_dimensional_shape` | Displacement-corrected geometry in throat units and metres.  |
-| `corrected_exit_displacement_thickness` | Extrapolated final suction-side $\delta^{\ast}$ in metres.        |
-| `corrected_exit_momentum_thickness` | Extrapolated final suction-side $\theta$ in metres.          |
+| `nondimensional_shapes.corrected` | Displacement-corrected geometry in throat-based coordinates. |
+| `dimensional_shapes.corrected` | The same displacement-corrected geometry in metres. |
+| `dimensional_corrected_exit_displacement_thickness` | Final extrapolated suction-side $\delta^{\ast}$, m. |
+| `dimensional_corrected_exit_momentum_thickness` | Final extrapolated suction-side $\theta$, m. |
 
 For the conical contour, local Mach at every divergent-wall node is found by inverting the circular area-Mach relation.
 The same integral correction is then applied to its stored meridional walls.
@@ -896,10 +949,9 @@ Rotor controls and outputs are:
 | `initial_turbulent_displacement_thickness` | Inlet $\delta^{\ast}$ applied to both surfaces, in metres.              |
 | `initial_turbulent_momentum_thickness` | Inlet $\theta$ applied to both surfaces, in metres.                |
 | `pressure_boundary_layer`, `suction_boundary_layer` | Results evaluated directly on the MOC surfaces. |
-| `pressure_boundary_layer_marching`, `suction_boundary_layer_marching` | Aliases of the same rotor results. |
-| `corrected_shape`, `dimensional_shapes.corrected` | Displacement-corrected passage in $r^{\ast}$ units and metres. |
-| `trailing_edge_thickness`, `physical_trailing_edge_thickness` | Remaining trailing-edge metal. |
-| `corrected_pitch_residual` | Corrected outlet pitch minus corrected inlet pitch in $r^{\ast}$ units. |
+| `nondimensional_shapes.corrected`, `dimensional_shapes.corrected` | Corrected passage in $r^{\ast}$ units and m. |
+| `trailing_edge_thickness`, `dimensional_trailing_edge_thickness` | Remaining trailing-edge metal. |
+| `corrected_passage_pitch_residual` | Corrected outlet minus inlet passage pitch in $r^{\ast}$ units. |
 
 `blade.plot(dimensional=True, corrected=True)` plots the corrected geometry in millimetres;
 `corrected=False` selects the ideal shape. `show_two_blades=True` completes the two blades surrounding the stored
@@ -981,13 +1033,17 @@ solution. They include `real_outlet_absolute_flow_mach`, `real_outlet_absolute_a
 
 #### Stator aftermixing
 
-The stator is stationary, so the nozzle-axis velocity is already in the absolute frame. `trailing_edge_thickness` is a
-physical metal thickness in metres and contributes to $D_{\mathrm{TE}}$. As in NASA TM X-2343, it affects the mixed-out
-conservation calculation only.
+The stator is stationary, so nozzle flow is already in the absolute frame. The input metal fraction first establishes
+the uncorrected trailing-edge thickness. Boundary-layer correction widens the open nozzle pitch and reduces the
+remaining metal as described above. Final `mixing_results` uses only the corrected nozzle pitch, corrected remaining
+trailing-edge thickness and corrected or extrapolated BL thicknesses.
 
-`uncorrected_mixing_results` is a diagnostic calculation at the original exit stations and ideal trailing edge nozzle
-thickness uncorrected by the boundary layer. `mixing_results` uses the corrected spacing and nozzle trailing edge
-thicknesses. The selected flow solution is stored under `mixing_solution` as `supersonic` or `subsonic`.
+Both circumferential stator pitch and trailing-edge thickness are projected normal to the premixing flow. Their cosine
+factors cancel, so the metal blockage contribution can also be written
+
+$$D_{\mathrm{TE,stator}}=\frac{t_{\mathrm{TE},c}}{S_{N,c}}.$$
+
+The selected flow solution is stored under `mixing_solution` as `supersonic` or `subsonic`.
 The selected final values are available as `real_outlet_absolute_flow_mach` and `real_outlet_absolute_flow_angle`,
 with `ideal_outlet_absolute_axial_flow_mach` and `supersonic_mixing_available` providing additional information.
 
@@ -1054,12 +1110,12 @@ The final premixing values remain available as `ideal_outlet_relative_flow_mach`
 `ideal_outlet_relative_flow_angle`. The aftermixed results remain available in both frames. The Mach-target flag
 requires `iterate_outlet_metal_angle=True` and the requested outlet Mach belonging to the selected input family.
 
-##### Legacy pitch closure
+##### Legacy passage-pitch closure
 
 Set
 
 ```python
-iterate_pitch_closure=True
+iterate_passage_pitch_closure=True
 ```
 
 to reproduce the NASA TM X-2434 `BETAT` closure. It holds `ideal_outlet_relative_flow_mach` fixed and varies
@@ -1069,13 +1125,13 @@ $$G^{\ast}_{\mathrm{out,corr}}-G^{\ast}_{\mathrm{in,ideal}}=0.$$
 
 This allows to keep the same leading and trailing edge thickness for the rotor blade when boundary layer correction is
 used. The first unbracketed update follows the legacy mass-continuity expression; once trial geometries exist on both
-sides of equal pitch, SciPy's bracketed Brent scheme refines the solution.
+sides of equal passage pitch, SciPy's bracketed Brent scheme refines the solution.
 
 In this mode, the requested outlet angle in the selected input frame is only the initial estimate, and the final outlet
-direction will generally differ. Construction therefore emits a warning. Pitch closure is incompatible with
+direction will generally differ. Construction therefore emits a warning. Passage-pitch closure is incompatible with
 `iterate_outlet_metal_angle=True` and
-`match_real_outlet_mach=True`. `pitch_closure_iteration_count`, `pitch_closure_outlet_metal_angle` and
-`pitch_closure_residual` report the result.
+`match_real_outlet_mach=True`. `passage_pitch_closure_iteration_count`,
+`passage_pitch_closure_outlet_metal_angle` and `passage_pitch_closure_residual` report the result.
 
 #### Stator iterative schemes
 

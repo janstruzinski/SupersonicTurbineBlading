@@ -4,13 +4,14 @@ from .boundary_layer.boundary_layer_solver import BoundaryLayerError, BoundaryLa
 from .common_results import BoundaryLayerResult, SurfaceCoordinates
 from .fluid import Fluid, FluidPropertyError, FluidState
 from .rotor.rotor_blade import SupersonicRotorBlade
-from .rotor.rotor_results import BladeShape, DimensionalBladeShapes, FlowStateTable, StartingResult
+from .rotor.rotor_results import BladeShape, BladeShapes, DimensionalBladeShapes, FlowStateTable, StartingResult
 from .stator.stator_geometry import ContourMethod
-from .stator.stator_results import DimensionalNozzleShapes, NozzleShape
+from .stator.stator_results import DimensionalNozzleShapes, NozzleShape, NozzleShapes
 from .stator.stator_nozzle import StatorDesignConvergenceError, SupersonicStatorNozzle
 
 __all__ = [
     "BladeShape",
+    "BladeShapes",
     "BoundaryLayerError",
     "BoundaryLayerMode",
     "BoundaryLayerResult",
@@ -22,6 +23,7 @@ __all__ = [
     "FluidState",
     "FlowStateTable",
     "NozzleShape",
+    "NozzleShapes",
     "StartingResult",
     "StatorDesignConvergenceError",
     "SupersonicRotorBlade",

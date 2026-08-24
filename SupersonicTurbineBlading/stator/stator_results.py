@@ -25,8 +25,10 @@ class NozzleShape:
     :ivar suction_surface: Suction-side wall after rotation into the turbine frame.
     :ivar float chord: Axial nozzle chord in the active length scale.
     :ivar float throat_width: Full ideal throat opening in the active length scale.
-    :ivar float exit_opening: Full exit opening in the active length scale.
-    :ivar float spacing: Periodic stator pitch in the active length scale.
+    :ivar float nozzle_exit_width: Full passage width where the divergent wall meets the straight section.
+    :ivar float nozzle_passage_pitch: Open circumferential nozzle pitch in the active length scale.
+    :ivar float total_pitch: Open nozzle pitch plus trailing-edge metal thickness in the active length scale.
+    :ivar float trailing_edge_thickness: Remaining trailing-edge metal in the active length scale.
     :ivar str coordinate_scale: Human-readable description of the active length scale.
     """
 
@@ -34,8 +36,10 @@ class NozzleShape:
     suction_surface: SurfaceCoordinates
     chord: float
     throat_width: float
-    exit_opening: float
-    spacing: float
+    nozzle_exit_width: float
+    nozzle_passage_pitch: float
+    total_pitch: float
+    trailing_edge_thickness: float
     coordinate_scale: str
 
     def scaled(self, factor: float, scale_name: str) -> NozzleShape:
@@ -51,34 +55,40 @@ class NozzleShape:
                            suction_surface=self.suction_surface.scaled(factor),
                            chord=self.chord * factor,
                            throat_width=self.throat_width * factor,
-                           exit_opening=self.exit_opening * factor,
-                           spacing=self.spacing * factor,
+                           nozzle_exit_width=self.nozzle_exit_width * factor,
+                           nozzle_passage_pitch=self.nozzle_passage_pitch * factor,
+                           total_pitch=self.total_pitch * factor,
+                           trailing_edge_thickness=self.trailing_edge_thickness * factor,
                            coordinate_scale=scale_name)
 
 
 @dataclass(frozen=True)
-class DimensionalNozzleShapes:
-    """Store dimensional ideal and boundary-layer-corrected stator passages.
+class NozzleShapes:
+    """Store uncorrected and BL-corrected stator geometries in one coordinate scale.
 
-    :ivar float total_throat_area: Total choked area of the complete stator row, m^2.
-    :ivar float single_nozzle_throat_area: Choked area assigned to one nozzle passage, m^2.
-    :ivar int nozzle_count: Number of identical stator passages.
-    :ivar throat_height: Annulus height used by the planar MOC model, m, or ``None`` for a conical nozzle.
-    :ivar ideal_throat_width: Planar full throat width, m, or ``None`` for a conical nozzle.
-    :ivar ideal_throat_diameter: Conical throat diameter, m, or ``None`` for a planar MOC nozzle.
-    :ivar float coordinate_scale_length: Metres represented by one stored coordinate unit.
-    :ivar throat_half_width_scale: Planar throat half-width scale, m, or ``None`` for a conical nozzle.
+    :ivar NozzleShape uncorrected: Ideal nozzle geometry in the active coordinate scale.
+    :ivar NozzleShape corrected: Boundary-layer-corrected nozzle geometry in the active coordinate scale.
+    """
+
+    uncorrected: NozzleShape
+    corrected: NozzleShape
+
+
+@dataclass(frozen=True)
+class DimensionalNozzleShapes:
+    """Store dimensional stator passages and the pitch-derived machine scale.
+
+    :ivar float mean_radius: Stator mean radius, m.
+    :ivar float partial_admission_fraction: Fraction of the turbine perimeter occupied by nozzles.
+    :ivar int nozzle_count: Number of equal nozzles in the admitted arc.
+    :ivar float dimensional_scale_factor: Metres represented by one nondimensional coordinate unit.
     :ivar NozzleShape uncorrected: Ideal nozzle coordinates in metres.
     :ivar NozzleShape corrected: Boundary-layer-corrected nozzle coordinates in metres.
     """
 
-    total_throat_area: float
-    single_nozzle_throat_area: float
+    mean_radius: float
+    partial_admission_fraction: float
     nozzle_count: int
-    throat_height: float | None
-    ideal_throat_width: float | None
-    ideal_throat_diameter: float | None
-    coordinate_scale_length: float
-    throat_half_width_scale: float | None
+    dimensional_scale_factor: float
     uncorrected: NozzleShape
     corrected: NozzleShape

@@ -16,12 +16,13 @@ def make_stator(**overrides):
     inputs = dict(
         requested_outlet_absolute_flow_mach=1.77,
         requested_outlet_absolute_flow_angle=70.0,
-        mass_flow_rate=5.0,
         nozzle_count=30,
+        mean_radius=0.2,
         throat_height=0.05,
         fluid=Fluid(["Air"], [1.0]),
         upstream_total_temperature=900.0,
         upstream_total_pressure=1.0e6,
+        trailing_edge_thickness_over_total_pitch=0.05,
         number_of_nodes=41,
         iterate_outlet_metal_angle=False,
         boundary_layer_mode="fully_turbulent",
@@ -94,7 +95,8 @@ def test_conical_nozzle_uses_nasa_area_mach_relation():
         ideal_outlet_absolute_flow_mach,
         rel_tol=1.0e-11,
     )
-    assert math.isclose((shape.exit_opening / shape.throat_width) ** 2, expected_area_ratio, rel_tol=1.0e-14)
+    assert math.isclose((shape.nozzle_exit_width / shape.throat_width) ** 2,
+                        expected_area_ratio, rel_tol=1.0e-14)
     assert math.isclose(shape.pressure_surface.x[-1], expected_divergent_length, rel_tol=1.0e-14)
     assert math.isclose(shape.suction_surface.x[-1] - shape.pressure_surface.x[-1], expected_straight_length,
                         rel_tol=1.0e-14)
@@ -120,7 +122,7 @@ def test_gamma_is_evaluated_at_self_consistent_static_throat():
     assert stator.gamma == stator.throat_static_fluid_state.gamma
 
 
-def test_choked_area_and_width_follow_mass_flow_equation():
+def test_total_pitch_scaling_and_mass_flow_follow_machine_geometry_and_choked_relation():
     stator = make_stator()
     gamma = stator.gamma
     gas_constant = stator.fluid.specific_gas_constant
@@ -130,36 +132,78 @@ def test_choked_area_and_width_follow_mass_flow_equation():
         * math.sqrt(gamma / gas_constant)
         * (2.0 / (gamma + 1.0)) ** ((gamma + 1.0) / (2.0 * (gamma - 1.0)))
     )
-    expected_area = stator.mass_flow_rate / expected_flux
-    expected_width = expected_area / (stator.nozzle_count * stator.throat_height)
-    assert math.isclose(stator.total_throat_area, expected_area, rel_tol=1.0e-12)
-    assert math.isclose(stator.throat_width, expected_width, rel_tol=1.0e-12)
-    assert math.isclose(stator.dimensional_shapes.uncorrected.throat_width, expected_width, rel_tol=1.0e-12)
-    assert stator.throat_diameter is None
-    assert stator.dimensional_shapes.ideal_throat_diameter is None
-    assert math.isclose(stator.coordinate_scale_length, 0.5 * expected_width, rel_tol=1.0e-12)
+    expected_admitted_perimeter = 2.0 * math.pi * stator.mean_radius * stator.partial_admission_fraction
+    expected_total_pitch = expected_admitted_perimeter / stator.nozzle_count
+    nondimensional = stator.nondimensional_shapes.uncorrected
+    dimensional = stator.dimensional_shapes.uncorrected
+    expected_area = stator.nozzle_count * dimensional.throat_width * stator.throat_height
+
+    assert math.isclose(stator.dimensional_admitted_perimeter, expected_admitted_perimeter, rel_tol=1.0e-12)
+    assert math.isclose(stator.dimensional_total_pitch, expected_total_pitch, rel_tol=1.0e-12)
+    assert math.isclose(dimensional.total_pitch, expected_total_pitch, rel_tol=1.0e-12)
+    assert math.isclose(dimensional.nozzle_passage_pitch + dimensional.trailing_edge_thickness,
+                        expected_total_pitch, rel_tol=1.0e-12)
+    assert math.isclose(stator.dimensional_scale_factor,
+                        expected_total_pitch / nondimensional.total_pitch, rel_tol=1.0e-12)
+    assert math.isclose(stator.dimensional_total_throat_area, expected_area, rel_tol=1.0e-12)
+    assert math.isclose(stator.mass_flow_rate, expected_flux * expected_area, rel_tol=1.0e-12)
+
+
+def test_partial_admission_scales_total_pitch_throat_area_and_mass_flow():
+    full = make_stator(partial_admission_fraction=1.0)
+    half = make_stator(partial_admission_fraction=0.5)
+
+    assert math.isclose(half.dimensional_admitted_perimeter,
+                        0.5 * full.dimensional_admitted_perimeter, rel_tol=1.0e-12)
+    assert math.isclose(half.dimensional_total_pitch, 0.5 * full.dimensional_total_pitch, rel_tol=1.0e-12)
+    assert math.isclose(half.dimensional_scale_factor, 0.5 * full.dimensional_scale_factor, rel_tol=1.0e-12)
+    assert math.isclose(half.dimensional_total_throat_area,
+                        0.5 * full.dimensional_total_throat_area, rel_tol=1.0e-12)
+    assert math.isclose(half.mass_flow_rate, 0.5 * full.mass_flow_rate, rel_tol=1.0e-12)
+
+
+def test_moc_stores_ideal_uncorrected_and_corrected_area_ratios():
+    stator = make_stator()
+    uncorrected = stator.nondimensional_shapes.uncorrected
+    corrected = stator.nondimensional_shapes.corrected
+    expected_ideal = isentropic_area_ratio(stator.ideal_outlet_absolute_flow_mach, stator.gamma)
+
+    assert math.isclose(stator.nondimensional_ideal_exit_area_ratio, expected_ideal, rel_tol=1.0e-13)
+    assert math.isclose(stator.nondimensional_uncorrected_exit_area_ratio,
+                        uncorrected.nozzle_exit_width / uncorrected.throat_width, rel_tol=1.0e-13)
+    assert math.isclose(stator.nondimensional_corrected_exit_area_ratio,
+                        corrected.nozzle_exit_width / corrected.throat_width, rel_tol=1.0e-13)
 
 
 def test_stores_corrected_uncorrected_and_dimensional_shapes():
     stator = make_stator()
-    assert stator.uncorrected_shape.coordinate_scale == "throat half-width"
-    assert stator.corrected_shape.coordinate_scale == "throat half-width"
-    assert len(stator.suction_boundary_layer.s_over_chord) == len(stator.uncorrected_shape.suction_surface.x)
-    assert stator.suction_boundary_layer_marching is stator.suction_boundary_layer
-    assert stator.pressure_boundary_layer_marching is stator.pressure_boundary_layer
-    assert len(stator.suction_boundary_layer_marching.s_over_chord) == 2 * stator.number_of_nodes - 1
-    assert len(stator.uncorrected_shape.pressure_surface.x) == stator.pressure_number_of_nodes
-    assert len(stator.corrected_shape.suction_surface.x) == (len(stator.uncorrected_shape.suction_surface.x) + 2)
-    assert stator.corrected_shape.spacing > stator.uncorrected_shape.spacing
-    assert stator.corrected_dimensional_shape.throat_width > stator.uncorrected_dimensional_shape.throat_width
-    assert math.isclose(
-        stator.physical_chord, stator.uncorrected_shape.chord * stator.throat_half_width_scale, rel_tol=1.0e-12
-    )
+    uncorrected = stator.nondimensional_shapes.uncorrected
+    corrected = stator.nondimensional_shapes.corrected
+    dimensional_uncorrected = stator.dimensional_shapes.uncorrected
+    dimensional_corrected = stator.dimensional_shapes.corrected
+
+    assert uncorrected.coordinate_scale == "throat half-width"
+    assert corrected.coordinate_scale == "throat half-width"
+    assert len(stator.suction_boundary_layer.s_over_chord) == len(uncorrected.suction_surface.x)
+    assert len(stator.suction_boundary_layer.s_over_chord) == 2 * stator.number_of_nodes - 1
+    assert len(uncorrected.pressure_surface.x) == stator.pressure_number_of_nodes
+    assert len(corrected.suction_surface.x) == len(uncorrected.suction_surface.x) + 2
+    assert corrected.nozzle_passage_pitch > uncorrected.nozzle_passage_pitch
+    assert dimensional_corrected.throat_width > dimensional_uncorrected.throat_width
+    assert math.isclose(stator.dimensional_chord,
+                        uncorrected.chord * stator.dimensional_scale_factor, rel_tol=1.0e-12)
     assert stator.outlet_metal_angle == stator.ideal_outlet_absolute_flow_angle
-    assert stator.uncorrected_shape.pressure_surface.absolute_flow_mach is not None
-    assert stator.uncorrected_shape.pressure_surface.relative_flow_mach is None
+    assert uncorrected.pressure_surface.absolute_flow_mach is not None
+    assert uncorrected.pressure_surface.relative_flow_mach is None
     assert stator.pressure_boundary_layer.freestream_absolute_flow_mach is not None
     assert stator.pressure_boundary_layer.freestream_relative_flow_mach is None
+    assert not hasattr(stator, "uncorrected_shape")
+    assert not hasattr(stator, "uncorrected_dimensional_shape")
+    assert not hasattr(stator, "uncorrected_mixing_results")
+    assert not hasattr(stator, "pressure_boundary_layer_marching")
+    assert not hasattr(stator, "suction_boundary_layer_marching")
+    assert not hasattr(stator, "boundary_layer_pressure_station_count")
+    assert not hasattr(stator, "boundary_layer_suction_station_count")
 
 
 def test_conical_contour_reuses_bl_mixing_and_plotting_pipeline():
@@ -167,54 +211,42 @@ def test_conical_contour_reuses_bl_mixing_and_plotting_pipeline():
         throat_height=None,
         contour_method="conical",
         half_cone_metal_angle=15.0,
-        trailing_edge_thickness=1.0e-4,
     )
     expected_area_ratio = float(isentropic_area_ratio(stator.ideal_outlet_absolute_flow_mach, stator.gamma))
+    nondimensional_uncorrected = stator.nondimensional_shapes.uncorrected
+    nondimensional_corrected = stator.nondimensional_shapes.corrected
+    dimensional_uncorrected = stator.dimensional_shapes.uncorrected
 
     assert stator.contour_method == "conical"
     assert stator.actual_flow_turning_increment is None
-    assert math.isclose(stator.required_exit_area_ratio, expected_area_ratio, rel_tol=1.0e-13)
+    assert math.isclose(stator.nondimensional_ideal_exit_area_ratio, expected_area_ratio, rel_tol=1.0e-13)
     assert math.isclose(
-        (stator.uncorrected_shape.exit_opening / stator.uncorrected_shape.throat_width) ** 2,
+        (nondimensional_uncorrected.nozzle_exit_width / nondimensional_uncorrected.throat_width) ** 2,
         expected_area_ratio,
         rel_tol=1.0e-13,
     )
-    expected_single_area = stator.total_throat_area / stator.nozzle_count
-    expected_diameter = math.sqrt(4.0 * expected_single_area / math.pi)
+    expected_single_area = math.pi * dimensional_uncorrected.throat_width**2 / 4.0
     assert stator.throat_height is None
-    assert stator.throat_width is None
-    assert math.isclose(stator.single_nozzle_throat_area, expected_single_area, rel_tol=1.0e-14)
-    assert math.isclose(stator.throat_diameter, expected_diameter, rel_tol=1.0e-14)
-    assert math.isclose(stator.coordinate_scale_length, expected_diameter, rel_tol=1.0e-14)
-    assert math.isclose(math.pi * stator.throat_diameter**2 / 4.0, expected_single_area, rel_tol=1.0e-14)
-    assert math.isclose(stator.uncorrected_dimensional_shape.throat_width, expected_diameter, rel_tol=1.0e-14)
-    assert stator.dimensional_shapes.ideal_throat_width is None
-    assert math.isclose(stator.dimensional_shapes.ideal_throat_diameter, expected_diameter, rel_tol=1.0e-14)
-    assert math.isclose(stator.dimensional_shapes.coordinate_scale_length, expected_diameter, rel_tol=1.0e-14)
-    assert math.isclose(stator.physical_chord, stator.uncorrected_shape.chord * expected_diameter, rel_tol=1.0e-14)
+    assert math.isclose(stator.dimensional_single_nozzle_throat_area, expected_single_area, rel_tol=1.0e-14)
+    assert math.isclose(stator.dimensional_total_throat_area,
+                        stator.nozzle_count * expected_single_area, rel_tol=1.0e-14)
+    assert math.isclose(stator.dimensional_chord,
+                        nondimensional_uncorrected.chord * stator.dimensional_scale_factor, rel_tol=1.0e-14)
     assert math.isclose(
-        stator.conical_divergent_length,
-        stator.conical_divergent_length_over_throat_diameter * expected_diameter,
+        stator.dimensional_conical_divergent_length,
+        stator.nondimensional_conical_divergent_length * stator.dimensional_scale_factor,
         rel_tol=1.0e-14,
     )
-    assert math.isclose(
-        stator.trailing_edge_thickness_over_throat_diameter,
-        stator.trailing_edge_thickness / expected_diameter,
-        rel_tol=1.0e-14,
-    )
-    assert stator.trailing_edge_thickness_over_throat_half_width is None
-    expected_te_blockage = stator.trailing_edge_thickness_over_throat_diameter / (
-        stator.corrected_shape.spacing * math.cos(math.radians(stator.outlet_metal_angle))
-    )
+    expected_te_blockage = nondimensional_corrected.trailing_edge_thickness / \
+        nondimensional_corrected.nozzle_passage_pitch
     assert math.isclose(
         stator.mixing_results["subsonic"]["trailing_edge_blockage_ratio"], expected_te_blockage, rel_tol=1.0e-13
     )
-    assert len(stator.uncorrected_shape.pressure_surface.x) == stator.number_of_nodes
-    assert len(stator.uncorrected_shape.suction_surface.x) == 2 * stator.number_of_nodes - 1
-    assert len(stator.corrected_shape.suction_surface.x) == 2 * stator.number_of_nodes + 1
-    assert stator.boundary_layer_suction_station_count == 2 * stator.number_of_nodes - 1
+    assert len(nondimensional_uncorrected.pressure_surface.x) == stator.number_of_nodes
+    assert len(nondimensional_uncorrected.suction_surface.x) == 2 * stator.number_of_nodes - 1
+    assert len(nondimensional_corrected.suction_surface.x) == 2 * stator.number_of_nodes + 1
     assert math.isclose(
-        stator.suction_boundary_layer_marching.freestream_absolute_flow_mach[-1],
+        stator.suction_boundary_layer.freestream_absolute_flow_mach[-1],
         stator.ideal_outlet_absolute_flow_mach,
         rel_tol=1.0e-11,
     )
@@ -261,13 +293,9 @@ def test_stator_boundary_layer_uses_the_fixed_geometry_mesh():
     coarse = make_stator(number_of_nodes=31)
     fine = make_stator(number_of_nodes=61)
 
-    assert coarse.pressure_boundary_layer is coarse.pressure_boundary_layer_marching
-    assert coarse.suction_boundary_layer is coarse.suction_boundary_layer_marching
-    assert len(coarse.corrected_shape.suction_surface.x) == (len(coarse.uncorrected_shape.suction_surface.x) + 2)
-    assert coarse.boundary_layer_pressure_station_count == coarse.number_of_nodes
-    assert coarse.boundary_layer_suction_station_count == 2 * coarse.number_of_nodes - 1
-    assert fine.boundary_layer_pressure_station_count == fine.number_of_nodes
-    assert fine.boundary_layer_suction_station_count == 2 * fine.number_of_nodes - 1
+    coarse_uncorrected = coarse.nondimensional_shapes.uncorrected
+    coarse_corrected = coarse.nondimensional_shapes.corrected
+    assert len(coarse_corrected.suction_surface.x) == len(coarse_uncorrected.suction_surface.x) + 2
     assert coarse.actual_flow_turning_increment > fine.actual_flow_turning_increment
 
 
@@ -307,30 +335,30 @@ def test_stator_subsonic_mixing_solution_overrides_automatic_selection():
 
 
 def test_trailing_edge_thickness_uses_nasa_tm_x_2343_afmix_blockage():
-    sharp = make_stator(trailing_edge_thickness=0.0)
-    finite = make_stator(trailing_edge_thickness=1.0e-4)
+    sharp = make_stator(trailing_edge_thickness_over_total_pitch=0.0)
+    finite = make_stator(trailing_edge_thickness_over_total_pitch=0.05)
+    uncorrected = finite.nondimensional_shapes.uncorrected
+    corrected = finite.nondimensional_shapes.corrected
 
-    # AFMIX treats TE as a downstream blockage/loss input. It must therefore
-    # change the mixed state without silently modifying the MOC geometry,
-    # boundary-layer correction, throat sizing, or dimensional scale.
-    assert np.array_equal(finite.uncorrected_shape.pressure_surface.x, sharp.uncorrected_shape.pressure_surface.x)
-    assert np.array_equal(finite.corrected_shape.suction_surface.y, sharp.corrected_shape.suction_surface.y)
-    assert finite.throat_width == sharp.throat_width
+    # The input ratio divides total pitch into the unchanged ideal open passage and trailing-edge metal. The fixed
+    # dimensional total pitch therefore changes the dimensional scale when the metal fraction changes.
+    assert np.array_equal(uncorrected.pressure_surface.x,
+                          sharp.nondimensional_shapes.uncorrected.pressure_surface.x)
+    assert uncorrected.total_pitch > sharp.nondimensional_shapes.uncorrected.total_pitch
+    assert finite.dimensional_scale_factor < sharp.dimensional_scale_factor
     assert finite.real_outlet_absolute_flow_mach != sharp.real_outlet_absolute_flow_mach
     assert finite.real_outlet_absolute_flow_angle != sharp.real_outlet_absolute_flow_angle
 
-    # NASA TM X-2343 defines DTE = TE / (SP*cos(ALPH1)). Both TE and SP below
-    # are nondimensionalized by the same throat-half-width scale.
-    expected_dte = finite.trailing_edge_thickness_over_throat_half_width / (
-        finite.corrected_shape.spacing * math.cos(math.radians(finite.outlet_metal_angle))
-    )
+    # BL correction widens the open nozzle pitch and consumes the same amount of trailing-edge metal. AFMIX projects
+    # both circumferential quantities onto the plane normal to the flow, so the cosine cancels from their ratio.
+    expected_corrected_thickness = max(
+        0.0,
+        uncorrected.trailing_edge_thickness
+        - (corrected.nozzle_passage_pitch - uncorrected.nozzle_passage_pitch))
+    expected_dte = corrected.trailing_edge_thickness / corrected.nozzle_passage_pitch
+    assert math.isclose(corrected.trailing_edge_thickness, expected_corrected_thickness, rel_tol=1.0e-12)
     assert math.isclose(
         finite.mixing_results["subsonic"]["trailing_edge_blockage_ratio"], expected_dte, rel_tol=1.0e-12
-    )
-    assert math.isclose(
-        finite.trailing_edge_thickness_over_throat_half_width,
-        finite.trailing_edge_thickness / finite.throat_half_width_scale,
-        rel_tol=1.0e-12,
     )
 
     # Independently reconstruct the subsonic solution from the variables named in
@@ -342,19 +370,21 @@ def test_trailing_edge_thickness_uses_nasa_tm_x_2343_afmix_blockage():
     angle = math.radians(finite.outlet_metal_angle)
     velocity_ratio = math.sqrt((0.5 * gp * finite.ideal_outlet_absolute_flow_mach**2)
                                / (1.0 + 0.5 * gm * finite.ideal_outlet_absolute_flow_mach**2))
-    projected_spacing = finite.corrected_shape.spacing * math.cos(angle)
+    projected_nozzle_passage_pitch = corrected.nozzle_passage_pitch * math.cos(angle)
     pressure_displacement = (
-        finite.pressure_boundary_layer.displacement_thickness_over_chord[-1] * finite.uncorrected_shape.chord
+        finite.pressure_boundary_layer.displacement_thickness_over_chord[-1] * uncorrected.chord
     )
     pressure_momentum = (
-        finite.pressure_boundary_layer.momentum_thickness_over_chord[-1] * finite.uncorrected_shape.chord
+        finite.pressure_boundary_layer.momentum_thickness_over_chord[-1] * uncorrected.chord
     )
     displacement_ratio = (
-        pressure_displacement + finite.corrected_exit_displacement_thickness / finite.throat_half_width_scale
-    ) / projected_spacing
+        pressure_displacement
+        + finite.dimensional_corrected_exit_displacement_thickness / finite.dimensional_scale_factor
+    ) / projected_nozzle_passage_pitch
     momentum_ratio = (
-        pressure_momentum + finite.corrected_exit_momentum_thickness / finite.throat_half_width_scale
-    ) / projected_spacing
+        pressure_momentum
+        + finite.dimensional_corrected_exit_momentum_thickness / finite.dimensional_scale_factor
+    ) / projected_nozzle_passage_pitch
     area_momentum = 1.0 - displacement_ratio - expected_dte - momentum_ratio
     area = 1.0 - displacement_ratio - expected_dte
     afs = gm / gp * velocity_ratio**2
@@ -373,9 +403,18 @@ def test_trailing_edge_thickness_uses_nasa_tm_x_2343_afmix_blockage():
                         rel_tol=1.0e-12)
 
 
-def test_trailing_edge_thickness_must_be_nonnegative():
+def test_boundary_layer_correction_warns_when_it_consumes_all_trailing_edge_metal():
+    with pytest.warns(RuntimeWarning, match="consumed the complete stator trailing-edge thickness"):
+        stator = make_stator(trailing_edge_thickness_over_total_pitch=1.0e-3)
+
+    assert stator.nondimensional_shapes.corrected.trailing_edge_thickness == 0.0
+    assert stator.mixing_results["subsonic"]["trailing_edge_blockage_ratio"] == 0.0
+
+
+@pytest.mark.parametrize("thickness_ratio", [-1.0e-6, 1.0])
+def test_trailing_edge_thickness_ratio_must_be_in_half_open_unit_interval(thickness_ratio):
     with pytest.raises(ValueError, match="trailing_edge_thickness"):
-        make_stator(trailing_edge_thickness=-1.0e-6)
+        make_stator(trailing_edge_thickness_over_total_pitch=thickness_ratio)
 
 
 def test_supersonic_mixing_solution_override_is_rejected():
@@ -384,7 +423,7 @@ def test_supersonic_mixing_solution_override_is_rejected():
 
 
 def test_iterated_outlet_metal_angle_matches_requested_real_flow_angle():
-    stator = make_stator(iterate_outlet_metal_angle=True, trailing_edge_thickness=1.0e-4)
+    stator = make_stator(iterate_outlet_metal_angle=True)
     assert abs(stator.real_outlet_absolute_flow_angle - stator.requested_outlet_absolute_flow_angle) < 2.0e-3
     assert abs(stator.outlet_metal_angle - stator.requested_outlet_absolute_flow_angle) > 0.05
 
@@ -435,9 +474,10 @@ def test_coupled_conical_iteration_varies_ideal_absolute_flow_mach():
     assert abs(stator.real_outlet_absolute_flow_angle - stator.requested_outlet_absolute_flow_angle) < 2.0e-3
     assert not math.isclose(stator.ideal_outlet_absolute_flow_mach, stator.requested_outlet_absolute_flow_mach,
                             rel_tol=1.0e-3)
-    assert math.isclose(stator.required_exit_area_ratio, expected_area_ratio, rel_tol=1.0e-13)
+    assert math.isclose(stator.nondimensional_ideal_exit_area_ratio, expected_area_ratio, rel_tol=1.0e-13)
     assert math.isclose(
-        (stator.uncorrected_shape.exit_opening / stator.uncorrected_shape.throat_width) ** 2,
+        (stator.nondimensional_shapes.uncorrected.nozzle_exit_width
+         / stator.nondimensional_shapes.uncorrected.throat_width) ** 2,
         expected_area_ratio,
         rel_tol=1.0e-13,
     )
