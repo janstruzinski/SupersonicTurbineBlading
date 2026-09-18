@@ -14,9 +14,9 @@ from SupersonicTurbineBlading.rotor.rotor_geometry import design_ideal_geometry
 
 def make_blade(**overrides):
     inputs = dict(
-        ideal_inlet_absolute_flow_mach=2.80,
-        ideal_inlet_absolute_flow_angle=70.0,
-        requested_outlet_absolute_flow_angle=-61.0,
+        ideal_inlet_relative_flow_mach=2.504360667997334,
+        ideal_inlet_relative_flow_angle=67.51785165579383,
+        requested_outlet_relative_flow_angle=-64.51952926654342,
         lower_surface_relative_flow_mach=1.75,
         upper_surface_relative_flow_mach=2.95,
         blade_count=36,
@@ -204,9 +204,16 @@ def test_object_stores_ideal_and_corrected_shapes():
     assert not hasattr(blade, "suction_boundary_layer_marching")
     assert not hasattr(blade, "boundary_layer_pressure_station_count")
     assert not hasattr(blade, "boundary_layer_suction_station_count")
+    inlet_speed_of_sound = blade.inlet_static_fluid_state.speed_of_sound
+    relative_inlet_speed = blade.ideal_inlet_relative_flow_mach * inlet_speed_of_sound
+    relative_inlet_flow_angle = math.radians(blade.ideal_inlet_relative_flow_angle)
+    absolute_inlet_axial_velocity = relative_inlet_speed * math.cos(relative_inlet_flow_angle)
+    absolute_inlet_tangential_velocity = (
+        relative_inlet_speed * math.sin(relative_inlet_flow_angle) + blade.wheel_speed)
+    absolute_inlet_flow_mach = math.hypot(
+        absolute_inlet_axial_velocity, absolute_inlet_tangential_velocity) / inlet_speed_of_sound
     expected_static_temperature = blade.inlet_total_temperature / (
-        1.0 + 0.5 * (blade.gamma - 1.0) * blade.ideal_inlet_absolute_flow_mach**2
-    )
+        1.0 + 0.5 * (blade.gamma - 1.0) * absolute_inlet_flow_mach**2)
     assert math.isclose(blade.inlet_static_temperature, expected_static_temperature, rel_tol=1.0e-10)
     assert math.isclose(
         blade.pressure_boundary_layer.displacement_thickness_over_chord[0],
@@ -219,21 +226,15 @@ def test_object_stores_ideal_and_corrected_shapes():
     )
 
 
-def test_rotor_scalar_flow_results_have_absolute_and_relative_pairs():
+def test_rotor_scalar_flow_results_use_the_relative_frame():
     with pytest.warns(RuntimeWarning, match="limited to zero"):
         blade = make_blade(leading_edge_thickness_over_total_pitch=0.05)
 
     for station in ("ideal_inlet", "real_inlet", "ideal_outlet", "real_outlet"):
         for quantity in ("flow_angle", "flow_mach"):
-            assert hasattr(blade, f"{station}_absolute_{quantity}")
             assert hasattr(blade, f"{station}_relative_{quantity}")
-    assert hasattr(blade, "ideal_outlet_absolute_axial_flow_mach")
     assert hasattr(blade, "ideal_outlet_relative_axial_flow_mach")
-    assert hasattr(blade, "real_outlet_absolute_axial_flow_mach")
     assert hasattr(blade, "real_outlet_relative_axial_flow_mach")
-    assert not math.isclose(
-        blade.real_inlet_absolute_flow_mach, blade.real_inlet_relative_flow_mach, rel_tol=1.0e-3
-    )
 
 
 def test_flow_state_table_is_ordered_from_upstream_inlet_to_aftermixed_outlet():
@@ -251,19 +252,18 @@ def test_flow_state_table_is_ordered_from_upstream_inlet_to_aftermixed_outlet():
         "Real Mach number at the blade outlet",
     )
     expected_values = (
-        (blade.ideal_inlet_absolute_flow_angle, blade.ideal_inlet_relative_flow_angle),
-        (blade.ideal_inlet_absolute_flow_mach, blade.ideal_inlet_relative_flow_mach),
-        (blade.real_inlet_absolute_flow_angle, blade.real_inlet_relative_flow_angle),
-        (blade.real_inlet_absolute_flow_mach, blade.real_inlet_relative_flow_mach),
-        (blade.ideal_outlet_absolute_flow_angle, blade.ideal_outlet_relative_flow_angle),
-        (blade.ideal_outlet_absolute_flow_mach, blade.ideal_outlet_relative_flow_mach),
-        (blade.real_outlet_absolute_flow_angle, blade.real_outlet_relative_flow_angle),
-        (blade.real_outlet_absolute_flow_mach, blade.real_outlet_relative_flow_mach),
+        blade.ideal_inlet_relative_flow_angle,
+        blade.ideal_inlet_relative_flow_mach,
+        blade.real_inlet_relative_flow_angle,
+        blade.real_inlet_relative_flow_mach,
+        blade.ideal_outlet_relative_flow_angle,
+        blade.ideal_outlet_relative_flow_mach,
+        blade.real_outlet_relative_flow_angle,
+        blade.real_outlet_relative_flow_mach,
     )
-    assert tuple(row[1:] for row in blade.flow_state_table.rows) == expected_values
+    assert tuple(row[1] for row in blade.flow_state_table.rows) == expected_values
     printed = str(blade.flow_state_table)
     assert "Flow quantity" in printed
-    assert "Absolute frame" in printed
     assert "Relative frame" in printed
     assert printed.splitlines()[2].startswith(labels[0])
 
@@ -301,7 +301,7 @@ def test_surface_mach_inputs_obey_nasa_tn_d_4421_transition_ranges():
     # With this relatively axial inlet, dropping the pressure-side Mach too
     # far would require a Prandtl--Meyer transition turn larger than beta_in.
     with pytest.raises(ValueError, match="lower_surface_relative_flow_mach.*NASA TN D-4421 range"):
-        make_blade(ideal_inlet_absolute_flow_angle=30.0, lower_surface_relative_flow_mach=1.50)
+        make_blade(ideal_inlet_relative_flow_angle=20.0, lower_surface_relative_flow_mach=1.50)
 
     # This value satisfies M_upper > M_in but violates the upper transition
     # turning limit for the specified inlet/outlet angles.
@@ -309,110 +309,22 @@ def test_surface_mach_inputs_obey_nasa_tn_d_4421_transition_ranges():
         make_blade(upper_surface_relative_flow_mach=12.0)
 
 
-def test_absolute_inlet_is_converted_with_velocity_triangle():
-    blade = make_blade()
-    sound_speed = blade.inlet_static_fluid_state.speed_of_sound
-    absolute_speed = blade.ideal_inlet_absolute_flow_mach * sound_speed
-    absolute_angle = math.radians(blade.ideal_inlet_absolute_flow_angle)
-    expected_axial = absolute_speed * math.cos(absolute_angle)
-    expected_tangential = (
-        absolute_speed * math.sin(absolute_angle)
-        - 2.0 * math.pi * blade.mean_radius * blade.rotational_speed_rpm / 60.0
-    )
-    expected_relative_speed = math.hypot(expected_axial, expected_tangential)
+def test_relative_flow_input_accepts_an_explicit_outlet_mach():
+    impulse = make_blade()
+    asymmetric = make_blade(requested_outlet_relative_flow_mach=2.30, mixing_solution="subsonic")
 
-    assert math.isclose(blade.ideal_inlet_relative_flow_mach, expected_relative_speed / sound_speed, rel_tol=1.0e-12)
+    assert asymmetric.requested_outlet_relative_flow_mach == 2.30
+    assert asymmetric.ideal_outlet_relative_flow_mach == 2.30
     assert math.isclose(
-        blade.ideal_inlet_relative_flow_angle,
-        math.degrees(math.atan2(expected_tangential, expected_axial)),
+        asymmetric.nondimensional_shapes.uncorrected.pressure_surface.relative_flow_mach[-1],
+        2.30,
         rel_tol=1.0e-12,
     )
-    assert not math.isclose(blade.ideal_inlet_relative_flow_mach, blade.ideal_inlet_absolute_flow_mach, rel_tol=1.0e-3)
-
-
-def test_relative_flow_input_set_reproduces_the_same_velocity_triangles_and_geometry():
-    absolute = make_blade()
-    relative = make_blade(
-        ideal_inlet_absolute_flow_mach=None,
-        ideal_inlet_absolute_flow_angle=None,
-        requested_outlet_absolute_flow_angle=None,
-        ideal_inlet_relative_flow_mach=absolute.ideal_inlet_relative_flow_mach,
-        ideal_inlet_relative_flow_angle=absolute.ideal_inlet_relative_flow_angle,
-        requested_outlet_relative_flow_angle=absolute.ideal_outlet_relative_flow_angle,
+    assert not math.isclose(
+        asymmetric.nondimensional_shapes.uncorrected.chord,
+        impulse.nondimensional_shapes.uncorrected.chord,
+        rel_tol=1.0e-3,
     )
-
-    assert absolute.flow_input_reference_frame == "absolute"
-    assert relative.flow_input_reference_frame == "relative"
-    assert math.isclose(
-        relative.requested_outlet_absolute_flow_angle,
-        absolute.requested_outlet_absolute_flow_angle,
-        abs_tol=1.0e-12,
-    )
-    for name in (
-        "ideal_inlet_absolute_flow_mach",
-        "ideal_inlet_absolute_flow_angle",
-        "ideal_inlet_relative_flow_mach",
-        "ideal_inlet_relative_flow_angle",
-        "real_inlet_absolute_flow_mach",
-        "real_inlet_absolute_flow_angle",
-        "real_inlet_relative_flow_mach",
-        "real_inlet_relative_flow_angle",
-        "ideal_outlet_absolute_flow_mach",
-        "ideal_outlet_absolute_flow_angle",
-        "ideal_outlet_relative_flow_mach",
-        "ideal_outlet_relative_flow_angle",
-    ):
-        assert math.isclose(getattr(relative, name), getattr(absolute, name), rel_tol=1.0e-12, abs_tol=1.0e-12)
-    assert np.allclose(relative.nondimensional_shapes.uncorrected.pressure_surface.x,
-                       absolute.nondimensional_shapes.uncorrected.pressure_surface.x, atol=1.0e-13)
-    assert np.allclose(relative.nondimensional_shapes.uncorrected.pressure_surface.y,
-                       absolute.nondimensional_shapes.uncorrected.pressure_surface.y, atol=1.0e-13)
-    assert np.allclose(relative.nondimensional_shapes.uncorrected.suction_surface.x,
-                       absolute.nondimensional_shapes.uncorrected.suction_surface.x, atol=1.0e-13)
-    assert np.allclose(relative.nondimensional_shapes.uncorrected.suction_surface.y,
-                       absolute.nondimensional_shapes.uncorrected.suction_surface.y, atol=1.0e-13)
-
-
-def test_relative_flow_input_set_accepts_an_explicit_outlet_mach():
-    absolute = make_blade(requested_outlet_absolute_flow_mach=2.0, mixing_solution="subsonic")
-    relative = make_blade(
-        ideal_inlet_absolute_flow_mach=None,
-        ideal_inlet_absolute_flow_angle=None,
-        requested_outlet_absolute_flow_angle=None,
-        requested_outlet_absolute_flow_mach=None,
-        ideal_inlet_relative_flow_mach=absolute.ideal_inlet_relative_flow_mach,
-        ideal_inlet_relative_flow_angle=absolute.ideal_inlet_relative_flow_angle,
-        requested_outlet_relative_flow_angle=absolute.ideal_outlet_relative_flow_angle,
-        requested_outlet_relative_flow_mach=absolute.ideal_outlet_relative_flow_mach,
-        mixing_solution="subsonic",
-    )
-
-    assert relative.requested_outlet_relative_flow_mach == absolute.ideal_outlet_relative_flow_mach
-    assert math.isclose(relative.requested_outlet_absolute_flow_mach, 2.0, rel_tol=1.0e-12)
-    assert math.isclose(relative.ideal_outlet_absolute_flow_mach, 2.0, rel_tol=1.0e-12)
-    assert np.allclose(relative.nondimensional_shapes.uncorrected.pressure_surface.x,
-                       absolute.nondimensional_shapes.uncorrected.pressure_surface.x, atol=1.0e-13)
-    assert np.allclose(relative.nondimensional_shapes.uncorrected.suction_surface.y,
-                       absolute.nondimensional_shapes.uncorrected.suction_surface.y, atol=1.0e-13)
-
-
-def test_absolute_and_relative_flow_input_sets_are_mutually_exclusive():
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        make_blade(
-            ideal_inlet_relative_flow_mach=2.5,
-            ideal_inlet_relative_flow_angle=67.0,
-            requested_outlet_relative_flow_angle=-64.0,
-        )
-
-
-def test_relative_flow_input_set_must_be_complete():
-    with pytest.raises(ValueError, match="relative rotor flow input set is incomplete"):
-        make_blade(
-            ideal_inlet_absolute_flow_mach=None,
-            ideal_inlet_absolute_flow_angle=None,
-            requested_outlet_absolute_flow_angle=None,
-            ideal_inlet_relative_flow_mach=2.5,
-        )
 
 
 @pytest.mark.parametrize("number_of_nodes", [19, 20.5, True])
@@ -424,16 +336,12 @@ def test_number_of_nodes_must_be_an_integer_at_least_twenty(number_of_nodes):
 def test_relative_flow_inputs_support_real_outlet_flow_angle_matching():
     reference = make_blade()
     matched = make_blade(
-        ideal_inlet_absolute_flow_mach=None,
-        ideal_inlet_absolute_flow_angle=None,
-        requested_outlet_absolute_flow_angle=None,
         ideal_inlet_relative_flow_mach=reference.ideal_inlet_relative_flow_mach,
         ideal_inlet_relative_flow_angle=reference.ideal_inlet_relative_flow_angle,
         requested_outlet_relative_flow_angle=reference.real_outlet_relative_flow_angle,
         iterate_outlet_metal_angle=True,
     )
 
-    assert matched.flow_input_reference_frame == "relative"
     assert abs(
         matched.real_outlet_relative_flow_angle - matched.requested_outlet_relative_flow_angle
     ) < 2.0e-3
@@ -504,37 +412,10 @@ def test_leading_edge_thickness_ratio_is_bounded(ratio):
 
 def test_external_wave_correction_warns_for_supersonic_axial_inflow():
     with pytest.warns(RuntimeWarning, match="supersonic rotor-relative axial Mach"):
-        blade = make_blade(ideal_inlet_absolute_flow_angle=60.0, upper_surface_relative_flow_mach=3.2,
+        blade = make_blade(ideal_inlet_relative_flow_angle=60.0, upper_surface_relative_flow_mach=3.2,
                            leading_edge_thickness_over_total_pitch=0.20)
 
     assert blade.ideal_inlet_relative_flow_mach * math.cos(math.radians(blade.ideal_inlet_relative_flow_angle)) > 1.0
-
-
-def test_absolute_outlet_flow_angle_uses_exit_velocity_triangle():
-    blade = make_blade()
-    temperature_factor = 1.0 + 0.5 * (blade.gamma - 1.0) * blade.ideal_outlet_relative_flow_mach**2
-    static_temperature = blade.relative_inlet_total_temperature / temperature_factor
-    sound_speed = math.sqrt(blade.gamma * blade.fluid.specific_gas_constant * static_temperature)
-    relative_speed = blade.ideal_outlet_relative_flow_mach * sound_speed
-    relative_angle = math.radians(blade.outlet_metal_angle)
-    absolute_angle = math.degrees(
-        math.atan2(
-            relative_speed * math.sin(relative_angle) + blade.wheel_speed, relative_speed * math.cos(relative_angle)
-        )
-    )
-
-    # In zero-deviation mode the inviscid relative exit direction equals the
-    # metal angle, and its fixed-frame transform equals the requested angle.
-    assert math.isclose(absolute_angle, blade.requested_outlet_absolute_flow_angle, abs_tol=1.0e-10)
-    assert not math.isclose(blade.outlet_metal_angle, blade.requested_outlet_absolute_flow_angle, abs_tol=1.0e-3)
-    selected = blade.mixing_results[blade.mixing_solution]
-    assert selected["real_outlet_absolute_flow_angle"] == blade.real_outlet_absolute_flow_angle
-    assert selected["real_outlet_absolute_flow_mach"] == blade.real_outlet_absolute_flow_mach
-    assert not math.isclose(
-        selected["real_outlet_absolute_flow_angle"],
-        selected["real_outlet_relative_flow_angle"],
-        abs_tol=1.0e-3,
-    )
 
 
 def test_rotor_default_mixing_solution_follows_premixing_axial_mach():
@@ -543,10 +424,8 @@ def test_rotor_default_mixing_solution_follows_premixing_axial_mach():
     assert blade.ideal_outlet_relative_axial_flow_mach >= 1.0
     assert blade.mixing_results["supersonic"]["available"]
     assert blade.mixing_solution == "supersonic"
-    assert (
-        blade.real_outlet_absolute_flow_mach
-        == blade.mixing_results["supersonic"]["real_outlet_absolute_flow_mach"]
-    )
+    assert blade.real_outlet_relative_flow_mach == blade.mixing_results["supersonic"][
+        "real_outlet_relative_flow_mach"]
 
 
 def test_rotor_subsonic_mixing_solution_overrides_automatic_selection():
@@ -555,10 +434,8 @@ def test_rotor_subsonic_mixing_solution_overrides_automatic_selection():
     assert blade.ideal_outlet_relative_axial_flow_mach >= 1.0
     assert blade.mixing_results["supersonic"]["available"]
     assert blade.mixing_solution == "subsonic"
-    assert (
-        blade.real_outlet_absolute_flow_mach
-        == blade.mixing_results["subsonic"]["real_outlet_absolute_flow_mach"]
-    )
+    assert blade.real_outlet_relative_flow_mach == blade.mixing_results["subsonic"][
+        "real_outlet_relative_flow_mach"]
 
 
 def test_rotor_boundary_layer_uses_the_fixed_moc_mesh():
@@ -605,62 +482,27 @@ def test_fixed_moc_mesh_removes_the_former_outlet_mach_count_jump():
     ) < 1.0e-6
 
 
-def test_optional_absolute_outlet_mach_controls_exit_construction():
-    impulse = make_blade()
-    asymmetric = make_blade(requested_outlet_absolute_flow_mach=2.0, mixing_solution="subsonic")
-
-    assert math.isclose(impulse.ideal_outlet_relative_flow_mach, impulse.ideal_inlet_relative_flow_mach,
-                        rel_tol=1.0e-12)
-    assert math.isclose(asymmetric.requested_outlet_absolute_flow_mach, 2.0, rel_tol=1.0e-12)
-    assert math.isclose(asymmetric.ideal_outlet_absolute_flow_angle,
-                        asymmetric.requested_outlet_absolute_flow_angle, abs_tol=1.0e-10)
-    assert not math.isclose(asymmetric.ideal_outlet_relative_flow_mach,
-                            asymmetric.requested_outlet_absolute_flow_mach, rel_tol=1.0e-3)
-    assert math.isclose(
-        asymmetric.nondimensional_shapes.uncorrected.pressure_surface.relative_flow_mach[-1],
-        asymmetric.ideal_outlet_relative_flow_mach,
-        rel_tol=1.0e-12,
-    )
-    assert math.isclose(
-        asymmetric.nondimensional_shapes.uncorrected.suction_surface.relative_flow_mach[-1],
-        asymmetric.ideal_outlet_relative_flow_mach,
-        rel_tol=1.0e-12,
-    )
-    assert not math.isclose(asymmetric.nondimensional_shapes.uncorrected.chord,
-                            impulse.nondimensional_shapes.uncorrected.chord, rel_tol=1.0e-3)
-
-
-def test_iterated_outlet_metal_angle_keeps_specified_ideal_absolute_flow_mach():
-    blade = make_blade(requested_outlet_absolute_flow_mach=2.2, requested_outlet_absolute_flow_angle=-56.0,
-                       iterate_outlet_metal_angle=True)
-    assert math.isclose(blade.requested_outlet_absolute_flow_mach, 2.2, rel_tol=1.0e-12)
-    assert abs(blade.real_outlet_absolute_flow_angle + 56.0) < 2.0e-3
-
-
-def test_coupled_iteration_matches_real_absolute_flow_mach_and_angle():
+def test_iterated_outlet_metal_angle_keeps_specified_ideal_relative_flow_mach():
+    reference = make_blade(requested_outlet_relative_flow_mach=2.30, mixing_solution="subsonic")
     blade = make_blade(
-        requested_outlet_absolute_flow_mach=2.1,
-        requested_outlet_absolute_flow_angle=-56.0,
+        requested_outlet_relative_flow_mach=2.30,
+        requested_outlet_relative_flow_angle=reference.real_outlet_relative_flow_angle,
         iterate_outlet_metal_angle=True,
-        match_real_outlet_mach=True,
+        mixing_solution="subsonic",
     )
-    assert abs(blade.real_outlet_absolute_flow_angle + 56.0) < 2.0e-3
-    assert abs(blade.real_outlet_absolute_flow_mach - 2.1) < 1.0e-4
-    assert not math.isclose(blade.ideal_outlet_absolute_flow_mach, blade.requested_outlet_absolute_flow_mach,
-                            rel_tol=1.0e-3)
+
+    assert blade.ideal_outlet_relative_flow_mach == 2.30
+    assert abs(blade.real_outlet_relative_flow_angle - reference.real_outlet_relative_flow_angle) < 2.0e-3
 
 
 def test_coupled_iteration_flag_requires_metal_angle_iteration_and_flow_mach():
     with pytest.raises(ValueError, match="iterate_outlet_metal_angle"):
-        make_blade(requested_outlet_absolute_flow_mach=2.1, match_real_outlet_mach=True)
+        make_blade(requested_outlet_relative_flow_mach=2.1, match_real_outlet_mach=True)
 
 
 def test_coupled_iteration_matches_real_relative_flow_mach_and_angle():
     reference = make_blade()
     matched = make_blade(
-        ideal_inlet_absolute_flow_mach=None,
-        ideal_inlet_absolute_flow_angle=None,
-        requested_outlet_absolute_flow_angle=None,
         ideal_inlet_relative_flow_mach=reference.ideal_inlet_relative_flow_mach,
         ideal_inlet_relative_flow_angle=reference.ideal_inlet_relative_flow_angle,
         requested_outlet_relative_flow_angle=reference.real_outlet_relative_flow_angle,
@@ -669,7 +511,6 @@ def test_coupled_iteration_matches_real_relative_flow_mach_and_angle():
         match_real_outlet_mach=True,
     )
 
-    assert matched.flow_input_reference_frame == "relative"
     assert abs(
         matched.real_outlet_relative_flow_angle - matched.requested_outlet_relative_flow_angle
     ) < 2.0e-3
@@ -689,32 +530,12 @@ def test_legacy_passage_pitch_closure_changes_metal_angle_and_closes_nasa_tm_x_2
 
     assert blade.passage_pitch_closure_iteration_count is not None
     assert blade.passage_pitch_closure_outlet_metal_angle == blade.outlet_metal_angle
-    assert not math.isclose(blade.ideal_outlet_absolute_flow_angle, blade.requested_outlet_absolute_flow_angle,
+    assert not math.isclose(blade.ideal_outlet_relative_flow_angle, blade.requested_outlet_relative_flow_angle,
                             abs_tol=1.0e-3)
     assert abs(blade.passage_pitch_closure_residual * blade.sonic_radius_scale) <= 1.0e-6
     assert blade.passage_pitch_residual == blade.passage_pitch_closure_residual
     assert not math.isclose(
         blade.corrected_passage_pitch_residual, blade.passage_pitch_closure_residual, abs_tol=1.0e-4)
-
-
-def test_relative_flow_inputs_support_nasa_tm_x_2434_passage_pitch_closure():
-    initial = make_blade(number_of_nodes=101)
-    with pytest.warns(UserWarning, match="changes the outlet.*angle"):
-        blade = make_blade(
-            ideal_inlet_absolute_flow_mach=None,
-            ideal_inlet_absolute_flow_angle=None,
-            requested_outlet_absolute_flow_angle=None,
-            ideal_inlet_relative_flow_mach=initial.ideal_inlet_relative_flow_mach,
-            ideal_inlet_relative_flow_angle=initial.ideal_inlet_relative_flow_angle,
-            requested_outlet_relative_flow_angle=initial.ideal_outlet_relative_flow_angle,
-            iterate_passage_pitch_closure=True,
-            mixing_solution="subsonic",
-            number_of_nodes=101,
-        )
-
-    assert blade.flow_input_reference_frame == "relative"
-    assert blade.passage_pitch_closure_iteration_count is not None
-    assert abs(blade.passage_pitch_closure_residual * blade.sonic_radius_scale) <= 1.0e-6
 
 
 def test_passage_pitch_closure_keeps_trailing_edge_as_thick_as_leading_edge():
@@ -734,7 +555,7 @@ def test_passage_pitch_closure_keeps_trailing_edge_as_thick_as_leading_edge():
         {
             "iterate_outlet_metal_angle": True,
             "match_real_outlet_mach": True,
-            "requested_outlet_absolute_flow_mach": 2.1,
+            "requested_outlet_relative_flow_mach": 2.1,
         },
     ],
 )
@@ -744,29 +565,18 @@ def test_passage_pitch_closure_rejects_mixed_flow_matching(matching_flags):
 
 
 def test_subsonic_premixing_axial_mach_selects_subsonic_solution():
-    blade = make_blade(requested_outlet_absolute_flow_angle=-65.0)
+    blade = make_blade(requested_outlet_relative_flow_angle=-70.0)
 
     assert blade.ideal_outlet_relative_axial_flow_mach < 1.0
     assert blade.mixing_solution == "subsonic"
     assert blade.mixing_results["subsonic"]["available"]
     assert not blade.mixing_results["supersonic"]["available"]
     assert not blade.supersonic_mixing_available
-    assert math.isnan(blade.mixing_results["supersonic"]["real_outlet_absolute_flow_mach"])
+    assert math.isnan(blade.mixing_results["supersonic"]["real_outlet_relative_flow_mach"])
 
-    with pytest.raises(ValueError, match="requested_outlet_absolute_flow_mach target"):
-        make_blade(
-            requested_outlet_absolute_flow_mach=None,
-            iterate_outlet_metal_angle=True,
-            match_real_outlet_mach=True,
-        )
-
-
-def test_relative_coupled_iteration_requires_relative_flow_mach_target():
+def test_coupled_iteration_requires_relative_flow_mach_target():
     with pytest.raises(ValueError, match="requested_outlet_relative_flow_mach target"):
         make_blade(
-            ideal_inlet_absolute_flow_mach=None,
-            ideal_inlet_absolute_flow_angle=None,
-            requested_outlet_absolute_flow_angle=None,
             ideal_inlet_relative_flow_mach=2.5,
             ideal_inlet_relative_flow_angle=67.0,
             requested_outlet_relative_flow_angle=-64.0,
@@ -857,12 +667,6 @@ def test_starting_flag():
     assert skipped.starting_result is None
     assert calculated.starting_result is not None
     assert calculated.starting_result.maximum_starting_ideal_inlet_relative_flow_mach > 1.0
-
-
-def test_iterated_outlet_metal_angle_matches_requested_real_flow_angle():
-    blade = make_blade(requested_outlet_absolute_flow_angle=-57.5, iterate_outlet_metal_angle=True)
-    assert abs(blade.real_outlet_absolute_flow_angle + 57.5) < 2.0e-3
-    assert abs(blade.outlet_metal_angle + 57.5) > 0.1
 
 
 def test_plot_pairs_opposite_surfaces_at_common_leading_edges():

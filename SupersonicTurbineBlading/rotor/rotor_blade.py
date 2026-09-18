@@ -20,7 +20,6 @@ from .rotor_starting import calculate_starting_limit
 
 MixingSolution = Literal["supersonic", "subsonic"]
 MixingSolutionOverride = Literal["subsonic"]
-FlowInputReferenceFrame = Literal["absolute", "relative"]
 
 
 @dataclass(frozen=True)
@@ -80,37 +79,22 @@ class DesignConvergenceError(RuntimeError):
 class SupersonicRotorBlade:
     """Design one two-dimensional supersonic rotor blade section.
 
-    Parameters are ordinary Mach numbers and signed angles in degrees. The inlet and outlet flow states can be
-    supplied together in either the absolute frame or the rotor-relative frame. The two input families are mutually
-    exclusive. Mean radius and rotational speed construct the corresponding states in the other frame. The two
-    surface Mach inputs are always rotor-relative because they directly define the NASA TN D-4421 vortex arcs. No
-    Mach input is a critical velocity ratio ``M*`` or a Prandtl--Meyer angle.
+    Parameters are ordinary rotor-relative Mach numbers and signed angles in degrees. The absolute stagnation
+    conditions provide the thermodynamic reference, while mean radius and rotational speed establish the wheel speed.
+    The two surface Mach inputs are also rotor-relative because they directly define the NASA TN D-4421 vortex arcs.
+    No Mach input is a critical velocity ratio ``M*`` or a Prandtl--Meyer angle.
 
     The design is performed during initialization.  Ideal coordinates,
     boundary-layer results, corrected coordinates, outlet mixing, and the
     optional starting calculation are consequently available as object
     properties immediately after construction.
 
-    :param float | None ideal_inlet_absolute_flow_mach: Absolute inlet Mach number.
-    :param float | None ideal_inlet_absolute_flow_angle: Absolute inlet flow angle measured from
-        the positive axial direction toward the direction of rotation.
-    :param float | None requested_outlet_absolute_flow_angle: Absolute outlet flow-angle target
-        measured from the positive axial direction, degrees; normally negative
-        for the turbine-rotor convention used by NASA TN D-4421 and NASA TM X-2434.
-        By default this is the ideal premixing direction. With
-        ``iterate_outlet_metal_angle=True`` it is the desired real aftermixed direction.
-    :param float | None requested_outlet_absolute_flow_mach: Absolute outlet Mach target. By default it
-        is the uniform ideal value before aftermixing. With
-        ``match_real_outlet_mach=True`` it is instead the desired
-        mixed value. Omission selects the NASA TM X-2434 impulse-rotor assumption
-        ``M_out,rel=M_in,rel``.
-    :param float | None ideal_inlet_relative_flow_mach: Rotor-relative inlet Mach number. Supply this,
-        ``ideal_inlet_relative_flow_angle``, and ``requested_outlet_relative_flow_angle`` instead of the absolute
-        flow inputs to use the NASA TN D-4421 input convention.
-    :param float | None ideal_inlet_relative_flow_angle: Rotor-relative inlet flow angle measured from the positive
+    :param float ideal_inlet_relative_flow_mach: Rotor-relative inlet Mach number.
+    :param float ideal_inlet_relative_flow_angle: Rotor-relative inlet flow angle measured from the positive
         axial direction toward the direction of rotation, degrees.
-    :param float | None requested_outlet_relative_flow_angle: Rotor-relative ideal outlet flow angle, degrees;
-        normally negative for the NASA TN D-4421 turbine convention.
+    :param float requested_outlet_relative_flow_angle: Rotor-relative ideal outlet flow angle, degrees;
+        normally negative for the NASA TN D-4421 turbine convention. With ``iterate_outlet_metal_angle=True`` it is
+        instead the desired real aftermixed direction.
     :param float | None requested_outlet_relative_flow_mach: Rotor-relative outlet Mach target. By default it is
         the uniform ideal value before aftermixing. With ``match_real_outlet_mach=True`` it is instead the desired
         mixed value. Omission selects the impulse-rotor assumption ``M_out,rel=M_in,rel``.
@@ -122,7 +106,7 @@ class SupersonicRotorBlade:
     :param float mean_radius: Dimensional mean radius in the desired blade-length
         unit.  SI fluid properties require this value in metres.
     :param float rotational_speed_rpm: Rotor speed. Positive rotation is in
-        the positive tangential direction used by ``ideal_inlet_absolute_flow_angle``.
+        the positive tangential direction used by the flow-angle convention.
     :param Fluid fluid: CoolProp-backed ideal-gas mixture.
     :param float inlet_total_temperature: Absolute inlet total temperature, K.
     :param float inlet_total_pressure: Absolute inlet total pressure, Pa.
@@ -130,16 +114,16 @@ class SupersonicRotorBlade:
         constant-Mach circular arc. The boundary-layer calculation marches on
         the assembled MOC surface without a separate mesh.
     :param bool iterate_outlet_metal_angle: If false, assume zero relative-flow
-        deviation and convert the requested flow angle into the corresponding
-        outlet metal angle. If true, iterate the metal angle until the selected
-        mixed outlet flow angle in the input reference frame is obtained.
+        deviation and set the requested flow angle as the corresponding
+        outlet metal angle. If true, iterate the metal angle until the requested
+        mixed rotor-relative outlet flow angle is obtained.
     :param bool match_real_outlet_mach: If true, the iterative design also varies
-        the ideal relative outlet Mach until the selected mixed Mach equals the
-        requested outlet Mach in the input reference frame. This requires
+        the ideal relative outlet Mach until the mixed relative Mach equals the
+        requested relative outlet Mach. This requires
         ``iterate_outlet_metal_angle=True`` and a supplied requested outlet Mach.
     :param bool iterate_passage_pitch_closure: If true, use the NASA TM X-2434 iteration to
         change the outlet metal angle until the BL-corrected outlet
-        passage pitch equals the ideal inlet passage pitch. The supplied absolute outlet
+        passage pitch equals the ideal inlet passage pitch. The supplied relative outlet
         angle is only an initial estimate. This option is incompatible with
         either mixed-flow angle or Mach matching.
     :param float leading_edge_thickness_over_total_pitch: Leading-edge blade
@@ -166,7 +150,7 @@ class SupersonicRotorBlade:
         it is available. Set ``"subsonic"`` to force the subsonic solution.
     :ivar float max_flow_turning_increment: Largest turning increment between
         adjacent nodes in the final MOC transitions and circular arcs, degrees.
-    :ivar FlowStateTable flow_state_table: Printable inlet-to-outlet flow-angle and Mach comparison in both frames.
+    :ivar FlowStateTable flow_state_table: Printable rotor-relative inlet-to-outlet flow-angle and Mach summary.
     :ivar numpy.ndarray blade_profile_x_CAD: Corrected single-blade profile
         x coordinates in millimetres, ordered for direct CAD import. The first
         point is the lower-surface leading edge at zero.
@@ -181,13 +165,9 @@ class SupersonicRotorBlade:
         and origin convention as :attr:`blade_profile_y_CAD`.
     """
 
-    def __init__(self, *, ideal_inlet_absolute_flow_mach: float | None = None,
-        ideal_inlet_absolute_flow_angle: float | None = None,
-        requested_outlet_absolute_flow_angle: float | None = None,
-        requested_outlet_absolute_flow_mach: float | None = None,
-        ideal_inlet_relative_flow_mach: float | None = None,
-        ideal_inlet_relative_flow_angle: float | None = None,
-        requested_outlet_relative_flow_angle: float | None = None,
+    def __init__(self, *, ideal_inlet_relative_flow_mach: float,
+        ideal_inlet_relative_flow_angle: float,
+        requested_outlet_relative_flow_angle: float,
         requested_outlet_relative_flow_mach: float | None = None,
         lower_surface_relative_flow_mach: float,
         upper_surface_relative_flow_mach: float,
@@ -223,11 +203,7 @@ class SupersonicRotorBlade:
 
         # Check raw user inputs before converting them to float. This produces
         # useful engineering errors rather than failures deep inside the MOC.
-        self.flow_input_reference_frame = self._validate_inputs(
-            ideal_inlet_absolute_flow_mach=ideal_inlet_absolute_flow_mach,
-            ideal_inlet_absolute_flow_angle=ideal_inlet_absolute_flow_angle,
-            requested_outlet_absolute_flow_angle=requested_outlet_absolute_flow_angle,
-            requested_outlet_absolute_flow_mach=requested_outlet_absolute_flow_mach,
+        self._validate_inputs(
             ideal_inlet_relative_flow_mach=ideal_inlet_relative_flow_mach,
             ideal_inlet_relative_flow_angle=ideal_inlet_relative_flow_angle,
             requested_outlet_relative_flow_angle=requested_outlet_relative_flow_angle,
@@ -259,14 +235,11 @@ class SupersonicRotorBlade:
         self.inlet_total_temperature = float(inlet_total_temperature)
         self.inlet_total_pressure = float(inlet_total_pressure)
         self.wheel_speed = 2.0 * math.pi * self.mean_radius * self.rotational_speed_rpm / 60.0
-        self.requested_outlet_absolute_flow_angle = (None if requested_outlet_absolute_flow_angle is None
-                                                     else float(requested_outlet_absolute_flow_angle))
-        self.requested_outlet_relative_flow_angle = (None if requested_outlet_relative_flow_angle is None
-                                                     else float(requested_outlet_relative_flow_angle))
-        self._requested_outlet_absolute_flow_mach = (None if requested_outlet_absolute_flow_mach is None
-                                                     else float(requested_outlet_absolute_flow_mach))
-        self._requested_outlet_relative_flow_mach = (None if requested_outlet_relative_flow_mach is None
-                                                     else float(requested_outlet_relative_flow_mach))
+        self.ideal_inlet_relative_flow_mach = float(ideal_inlet_relative_flow_mach)
+        self.ideal_inlet_relative_flow_angle = float(ideal_inlet_relative_flow_angle)
+        self.requested_outlet_relative_flow_angle = float(requested_outlet_relative_flow_angle)
+        self.requested_outlet_relative_flow_mach = (None if requested_outlet_relative_flow_mach is None
+                                                    else float(requested_outlet_relative_flow_mach))
 
         # Keep the total-state properties as a useful diagnostic, but do not
         # use their gamma for the gas-dynamic design.  Gamma must represent
@@ -277,48 +250,11 @@ class SupersonicRotorBlade:
         # total-to-static relation, while mixture gamma itself depends on that
         # static temperature through Cp(T).  Solve this small fixed-point
         # problem instead of evaluating gamma once at total temperature.
-        if self.flow_input_reference_frame == "absolute":
-            self.ideal_inlet_absolute_flow_mach = float(ideal_inlet_absolute_flow_mach)
-            self.ideal_inlet_absolute_flow_angle = float(ideal_inlet_absolute_flow_angle)
-            (self.inlet_static_temperature, self.inlet_static_pressure, self.inlet_static_fluid_state) = \
-                self._solve_inlet_static_reference_state(initial_gamma=self.inlet_total_fluid_state.gamma)
-        else:
-            self.ideal_inlet_relative_flow_mach = float(ideal_inlet_relative_flow_mach)
-            self.ideal_inlet_relative_flow_angle = float(ideal_inlet_relative_flow_angle)
-            (self.inlet_static_temperature, self.inlet_static_pressure, self.inlet_static_fluid_state) = \
-                self._solve_inlet_static_reference_state_from_relative(initial_gamma=self.inlet_total_fluid_state.gamma)
+        (self.inlet_static_temperature, self.inlet_static_pressure, self.inlet_static_fluid_state) = \
+            self._solve_inlet_static_reference_state(initial_gamma=self.inlet_total_fluid_state.gamma)
         self.gamma = float(self.inlet_static_fluid_state.gamma)
         self.prandtl_number = float(self.inlet_static_fluid_state.prandtl_number)
 
-        # The static thermodynamic state and speed of sound are common to both frames; only the velocity vector
-        # changes. Preserve the supplied frame exactly and derive the corresponding state in the other frame.
-        inlet_speed_of_sound = self.inlet_static_fluid_state.speed_of_sound
-        if self.flow_input_reference_frame == "absolute":
-            self.absolute_inlet_speed = self.ideal_inlet_absolute_flow_mach * inlet_speed_of_sound
-            absolute_inlet_flow_angle_rad = math.radians(self.ideal_inlet_absolute_flow_angle)
-            self.absolute_inlet_axial_velocity = self.absolute_inlet_speed * math.cos(absolute_inlet_flow_angle_rad)
-            self.absolute_inlet_tangential_velocity = self.absolute_inlet_speed * math.sin(
-                absolute_inlet_flow_angle_rad)
-            self.relative_inlet_axial_velocity = self.absolute_inlet_axial_velocity
-            self.relative_inlet_tangential_velocity = self.absolute_inlet_tangential_velocity - self.wheel_speed
-            self.relative_inlet_speed = math.hypot(self.relative_inlet_axial_velocity,
-                                                   self.relative_inlet_tangential_velocity)
-            self.ideal_inlet_relative_flow_mach = self.relative_inlet_speed / inlet_speed_of_sound
-            self.ideal_inlet_relative_flow_angle = math.degrees(math.atan2(
-                self.relative_inlet_tangential_velocity, self.relative_inlet_axial_velocity))
-        else:
-            self.relative_inlet_speed = self.ideal_inlet_relative_flow_mach * inlet_speed_of_sound
-            relative_inlet_flow_angle_rad = math.radians(self.ideal_inlet_relative_flow_angle)
-            self.relative_inlet_axial_velocity = self.relative_inlet_speed * math.cos(relative_inlet_flow_angle_rad)
-            self.relative_inlet_tangential_velocity = self.relative_inlet_speed * math.sin(
-                relative_inlet_flow_angle_rad)
-            self.absolute_inlet_axial_velocity = self.relative_inlet_axial_velocity
-            self.absolute_inlet_tangential_velocity = self.relative_inlet_tangential_velocity + self.wheel_speed
-            self.absolute_inlet_speed = math.hypot(self.absolute_inlet_axial_velocity,
-                                                   self.absolute_inlet_tangential_velocity)
-            self.ideal_inlet_absolute_flow_mach = self.absolute_inlet_speed / inlet_speed_of_sound
-            self.ideal_inlet_absolute_flow_angle = math.degrees(math.atan2(
-                self.absolute_inlet_tangential_velocity, self.absolute_inlet_axial_velocity))
         self.leading_edge_thickness_over_total_pitch = float(leading_edge_thickness_over_total_pitch)
         self.use_leading_edge_entry_correction = bool(use_leading_edge_entry_correction)
         (self.real_inlet_relative_flow_mach, self.real_inlet_relative_flow_angle) = self._passage_entry_conditions()
@@ -342,35 +278,6 @@ class SupersonicRotorBlade:
                                                                       self.passage_inlet_static_pressure)
         self.passage_inlet_speed_of_sound = math.sqrt(self.gamma * self.fluid.specific_gas_constant
                                                       * self.passage_inlet_static_temperature)
-        real_inlet_absolute_state = self._relative_flow_state_to_absolute(
-            relative_flow_mach=self.real_inlet_relative_flow_mach,
-            relative_flow_angle_rad=math.radians(self.real_inlet_relative_flow_angle))
-        self.real_inlet_absolute_flow_mach = real_inlet_absolute_state["absolute_flow_mach"]
-        self.real_inlet_absolute_flow_angle = real_inlet_absolute_state["absolute_flow_angle"]
-        if self.flow_input_reference_frame == "absolute":
-            self.requested_outlet_absolute_flow_mach = self._requested_outlet_absolute_flow_mach
-            if self._requested_outlet_absolute_flow_mach is None:
-                self.requested_outlet_relative_flow_mach = None
-                self.requested_outlet_relative_flow_angle = self._absolute_outlet_to_relative_angle(
-                    absolute_flow_angle=self.requested_outlet_absolute_flow_angle,
-                    relative_flow_mach=self.ideal_inlet_relative_flow_mach)
-            else:
-                requested_outlet_state = self._absolute_outlet_state_to_relative(
-                    absolute_flow_mach=self._requested_outlet_absolute_flow_mach,
-                    absolute_flow_angle=self.requested_outlet_absolute_flow_angle)
-                self.requested_outlet_relative_flow_mach = requested_outlet_state["relative_flow_mach"]
-                self.requested_outlet_relative_flow_angle = requested_outlet_state["relative_flow_angle"]
-        else:
-            self.requested_outlet_relative_flow_mach = self._requested_outlet_relative_flow_mach
-            requested_relative_flow_mach = (self.ideal_inlet_relative_flow_mach
-                                            if self._requested_outlet_relative_flow_mach is None
-                                            else self._requested_outlet_relative_flow_mach)
-            requested_outlet_state = self._relative_flow_state_to_absolute(
-                relative_flow_mach=requested_relative_flow_mach,
-                relative_flow_angle_rad=math.radians(self.requested_outlet_relative_flow_angle))
-            self.requested_outlet_absolute_flow_mach = (None if self._requested_outlet_relative_flow_mach is None
-                                                        else requested_outlet_state["absolute_flow_mach"])
-            self.requested_outlet_absolute_flow_angle = requested_outlet_state["absolute_flow_angle"]
         self.number_of_nodes = int(number_of_nodes)
         self.iterate_outlet_metal_angle = bool(iterate_outlet_metal_angle)
         self.match_real_outlet_mach = bool(match_real_outlet_mach)
@@ -386,36 +293,20 @@ class SupersonicRotorBlade:
         self.dimensional_shapes: DimensionalBladeShapes | None = None
         self.passage_pitch_closure_iteration_count: int | None = None
 
-        # The zero-deviation mode first converts the requested angle to the
-        # matching relative direction and performs one design. The
-        # iterative mode repeatedly rebuilds the geometry, both boundary
-        # layers, and aftermixing solution because blockage changes whenever
-        # the trial metal angle changes.
+        # Without Mach matching, omission of an outlet Mach selects the impulse-rotor assumption. Angle iteration
+        # repeatedly rebuilds the geometry, both boundary layers, and aftermixing solution because blockage changes
+        # whenever the trial metal angle changes.
+        ideal_outlet_relative_flow_mach = (self.ideal_inlet_relative_flow_mach
+                                           if self.requested_outlet_relative_flow_mach is None
+                                           else self.requested_outlet_relative_flow_mach)
         if self.iterate_passage_pitch_closure:
-            if self.flow_input_reference_frame == "relative":
-                ideal_outlet_relative_flow_mach = (self.ideal_inlet_relative_flow_mach
-                                                   if self._requested_outlet_relative_flow_mach is None
-                                                   else self._requested_outlet_relative_flow_mach)
-                initial_outlet_metal_angle = self.requested_outlet_relative_flow_angle
-            else:
-                if self._requested_outlet_absolute_flow_mach is None:
-                    ideal_outlet_relative_flow_mach = self.ideal_inlet_relative_flow_mach
-                    initial_outlet_metal_angle = self._absolute_outlet_to_relative_angle(
-                        absolute_flow_angle=self.requested_outlet_absolute_flow_angle,
-                        relative_flow_mach=ideal_outlet_relative_flow_mach)
-                else:
-                    initial_outlet_state = self._absolute_outlet_state_to_relative(
-                        absolute_flow_mach=self._requested_outlet_absolute_flow_mach,
-                        absolute_flow_angle=self.requested_outlet_absolute_flow_angle)
-                    ideal_outlet_relative_flow_mach = initial_outlet_state["relative_flow_mach"]
-                    initial_outlet_metal_angle = initial_outlet_state["relative_flow_angle"]
+            initial_outlet_metal_angle = self.requested_outlet_relative_flow_angle
             outlet_metal_angle = self._solve_outlet_metal_angle_for_passage_pitch_closure(
                 initial_outlet_metal_angle=initial_outlet_metal_angle,
                 ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach)
-            requested_angle_name = f"requested_outlet_{self.flow_input_reference_frame}_flow_angle"
             warnings.warn("legacy pitch closure changes the outlet metal angle from its "
                 f"initial {initial_outlet_metal_angle:.6g} deg to "
-                f"{outlet_metal_angle:.6g} deg; {requested_angle_name} is used only "
+                f"{outlet_metal_angle:.6g} deg; requested_outlet_relative_flow_angle is used only "
                 "as the initial estimate",
                 UserWarning,
                 stacklevel=2)
@@ -423,42 +314,17 @@ class SupersonicRotorBlade:
             outlet_metal_angle, ideal_outlet_relative_flow_mach = \
                 self._solve_outlet_metal_angle_and_flow_mach_targets()
         elif self.iterate_outlet_metal_angle:
-            outlet_metal_angle = self._solve_outlet_metal_angle_for_target_flow()
-            ideal_outlet_relative_flow_mach = self._ideal_outlet_relative_flow_mach_for_metal_angle(outlet_metal_angle)
+            outlet_metal_angle = self._solve_outlet_metal_angle_for_target_flow(
+                ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach)
         else:
-            if self.flow_input_reference_frame == "relative":
-                ideal_outlet_relative_flow_mach = (self.ideal_inlet_relative_flow_mach
-                                                   if self._requested_outlet_relative_flow_mach is None
-                                                   else self._requested_outlet_relative_flow_mach)
-                outlet_metal_angle = self.requested_outlet_relative_flow_angle
-            else:
-                if self._requested_outlet_absolute_flow_mach is None:
-                    ideal_outlet_relative_flow_mach = self.ideal_inlet_relative_flow_mach
-                    outlet_metal_angle = self._absolute_outlet_to_relative_angle(
-                        absolute_flow_angle=self.requested_outlet_absolute_flow_angle,
-                        relative_flow_mach=ideal_outlet_relative_flow_mach)
-                else:
-                    ideal_outlet_state = self._absolute_outlet_state_to_relative(
-                        absolute_flow_mach=self._requested_outlet_absolute_flow_mach,
-                        absolute_flow_angle=self.requested_outlet_absolute_flow_angle)
-                    ideal_outlet_relative_flow_mach = ideal_outlet_state["relative_flow_mach"]
-                    outlet_metal_angle = ideal_outlet_state["relative_flow_angle"]
+            outlet_metal_angle = self.requested_outlet_relative_flow_angle
 
         self._validate_surface_mach_ranges(
             ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach, outlet_metal_angle=outlet_metal_angle)
         evaluation = self._evaluate(ideal_outlet_relative_flow_mach, outlet_metal_angle)
 
-        ideal_absolute_outlet_state = self._relative_flow_state_to_absolute(
-            relative_flow_mach=ideal_outlet_relative_flow_mach,
-            relative_flow_angle_rad=math.radians(outlet_metal_angle))
-        # Absolute outlet properties use the stationary frame. The explicit
-        # relative properties are the values passed to NASA TN D-4421 and
-        # NASA TM X-2434.
-        self.ideal_outlet_absolute_flow_mach = ideal_absolute_outlet_state["absolute_flow_mach"]
         self.ideal_outlet_relative_flow_mach = float(ideal_outlet_relative_flow_mach)
-        self.ideal_outlet_absolute_flow_angle = ideal_absolute_outlet_state["absolute_flow_angle"]
         self.ideal_outlet_relative_flow_angle = float(outlet_metal_angle)
-        self.ideal_outlet_absolute_axial_flow_mach = ideal_absolute_outlet_state["absolute_axial_flow_mach"]
         # Zero deviation makes the ideal relative-flow and metal angles
         # numerically equal; retain independent public quantities.
         self.outlet_metal_angle = float(outlet_metal_angle)
@@ -495,31 +361,20 @@ class SupersonicRotorBlade:
         if not bool(selected_mixing["available"]):
             raise DesignConvergenceError("the selected rotor aftermixing solution is unavailable")
         self.mixing_solution = selected_solution
-        self.real_outlet_absolute_flow_angle = float(selected_mixing["real_outlet_absolute_flow_angle"])
-        self.real_outlet_absolute_flow_mach = float(selected_mixing["real_outlet_absolute_flow_mach"])
-        self.real_outlet_absolute_axial_flow_mach = float(selected_mixing["real_outlet_absolute_axial_flow_mach"])
         self.real_outlet_relative_flow_angle = float(selected_mixing["real_outlet_relative_flow_angle"])
         self.real_outlet_relative_flow_mach = float(selected_mixing["real_outlet_relative_flow_mach"])
         self.real_outlet_relative_axial_flow_mach = float(selected_mixing["real_outlet_relative_axial_flow_mach"])
         self.ideal_outlet_relative_axial_flow_mach = float(selected_mixing["ideal_outlet_relative_axial_flow_mach"])
         self.supersonic_mixing_available = bool(self.mixing_results["supersonic"]["available"])
         self.flow_state_table = FlowStateTable(rows=(
-            ("Ideal flow angle at the inlet upstream", self.ideal_inlet_absolute_flow_angle,
-             self.ideal_inlet_relative_flow_angle),
-            ("Ideal Mach number at the inlet upstream", self.ideal_inlet_absolute_flow_mach,
-             self.ideal_inlet_relative_flow_mach),
-            ("Real flow angle at the blade inlet", self.real_inlet_absolute_flow_angle,
-             self.real_inlet_relative_flow_angle),
-            ("Real Mach number at the blade inlet", self.real_inlet_absolute_flow_mach,
-             self.real_inlet_relative_flow_mach),
-            ("Ideal flow angle at the blade outlet", self.ideal_outlet_absolute_flow_angle,
-             self.ideal_outlet_relative_flow_angle),
-            ("Ideal Mach number at the blade outlet", self.ideal_outlet_absolute_flow_mach,
-             self.ideal_outlet_relative_flow_mach),
-            ("Real flow angle at the blade outlet", self.real_outlet_absolute_flow_angle,
-             self.real_outlet_relative_flow_angle),
-            ("Real Mach number at the blade outlet", self.real_outlet_absolute_flow_mach,
-             self.real_outlet_relative_flow_mach)))
+            ("Ideal flow angle at the inlet upstream", self.ideal_inlet_relative_flow_angle),
+            ("Ideal Mach number at the inlet upstream", self.ideal_inlet_relative_flow_mach),
+            ("Real flow angle at the blade inlet", self.real_inlet_relative_flow_angle),
+            ("Real Mach number at the blade inlet", self.real_inlet_relative_flow_mach),
+            ("Ideal flow angle at the blade outlet", self.ideal_outlet_relative_flow_angle),
+            ("Ideal Mach number at the blade outlet", self.ideal_outlet_relative_flow_mach),
+            ("Real flow angle at the blade outlet", self.real_outlet_relative_flow_angle),
+            ("Real Mach number at the blade outlet", self.real_outlet_relative_flow_mach)))
 
         # Store the dimensional and Reynolds scales that were used for the
         # final boundary-layer calculation.  In iterative outlet-angle mode,
@@ -544,68 +399,22 @@ class SupersonicRotorBlade:
                                 if self.calculate_starting else None)
 
     @staticmethod
-    def _identify_flow_input_reference_frame(**values) -> FlowInputReferenceFrame:
-        """Identify one complete, mutually exclusive rotor flow-input family.
-
-        :param values: Constructor values indexed by their public argument name.
-        :type values: dict[str, object]
-        :return: Reference frame used by the supplied inlet and outlet flow inputs.
-        :rtype: Literal["absolute", "relative"]
-        :raises ValueError: If both, neither, or an incomplete flow-input family is supplied.
-        """
-
-        absolute_required = ("ideal_inlet_absolute_flow_mach",
-                             "ideal_inlet_absolute_flow_angle",
-        "requested_outlet_absolute_flow_angle")
-        relative_required = ("ideal_inlet_relative_flow_mach",
-                             "ideal_inlet_relative_flow_angle",
-                             "requested_outlet_relative_flow_angle")
-        absolute_names = absolute_required + ("requested_outlet_absolute_flow_mach",)
-        relative_names = relative_required + ("requested_outlet_relative_flow_mach",)
-        absolute_supplied = any(values[name] is not None for name in absolute_names)
-        relative_supplied = any(values[name] is not None for name in relative_names)
-
-        if absolute_supplied and relative_supplied:
-            raise ValueError("absolute and relative rotor flow input sets are mutually exclusive")
-        if not absolute_supplied and not relative_supplied:
-            raise ValueError("supply either the absolute or the relative rotor flow input set")
-
-        frame: FlowInputReferenceFrame = "absolute" if absolute_supplied else "relative"
-        required = absolute_required if frame == "absolute" else relative_required
-        missing = tuple(name for name in required if values[name] is None)
-        if missing:
-            raise ValueError(f"the {frame} rotor flow input set is incomplete; missing {', '.join(missing)}")
-        return frame
-
-    @staticmethod
-    def _validate_inputs(**values) -> FlowInputReferenceFrame:
+    def _validate_inputs(**values) -> None:
         """Validate public constructor values that do not need derived states.
 
         :param values: Constructor values indexed by their public argument name.
         :type values: dict[str, object]
-        :return: Reference frame used by the supplied flow-input family.
-        :rtype: Literal["absolute", "relative"]
         :raises TypeError: If a flag, count, mode, or fluid object has the wrong type.
         :raises ValueError: If a numerical value or option is outside the supported range.
         """
 
-        flow_input_reference_frame = SupersonicRotorBlade._identify_flow_input_reference_frame(**values)
-        if flow_input_reference_frame == "absolute":
-            if (not math.isfinite(values["ideal_inlet_absolute_flow_mach"])
-                or values["ideal_inlet_absolute_flow_mach"] <= 0.0):
-                raise ValueError("absolute ideal_inlet_absolute_flow_mach must be positive and finite")
-            if not 0.0 < values["ideal_inlet_absolute_flow_angle"] < 90.0:
-                raise ValueError("absolute ideal_inlet_absolute_flow_angle must be between 0 and 90")
-            if not -90.0 < values["requested_outlet_absolute_flow_angle"] <= 0.0:
-                raise ValueError("absolute requested_outlet_absolute_flow_angle must be between -90 and 0")
-        else:
-            if (not math.isfinite(values["ideal_inlet_relative_flow_mach"])
-                or values["ideal_inlet_relative_flow_mach"] <= 1.0):
-                raise ValueError("relative ideal_inlet_relative_flow_mach must be finite and > 1")
-            if not 0.0 < values["ideal_inlet_relative_flow_angle"] < 90.0:
-                raise ValueError("relative ideal_inlet_relative_flow_angle must be between 0 and 90")
-            if not -90.0 < values["requested_outlet_relative_flow_angle"] < 0.0:
-                raise ValueError("relative requested_outlet_relative_flow_angle must be between -90 and 0")
+        if (not math.isfinite(values["ideal_inlet_relative_flow_mach"])
+            or values["ideal_inlet_relative_flow_mach"] <= 1.0):
+            raise ValueError("ideal_inlet_relative_flow_mach must be finite and > 1")
+        if not 0.0 < values["ideal_inlet_relative_flow_angle"] < 90.0:
+            raise ValueError("ideal_inlet_relative_flow_angle must be between 0 and 90")
+        if not -90.0 < values["requested_outlet_relative_flow_angle"] < 0.0:
+            raise ValueError("requested_outlet_relative_flow_angle must be between -90 and 0")
         if (not math.isfinite(values["lower_surface_relative_flow_mach"])
             or values["lower_surface_relative_flow_mach"] < 1.0):
             raise ValueError("lower_surface_relative_flow_mach must be finite and >= 1")
@@ -614,14 +423,10 @@ class SupersonicRotorBlade:
             raise ValueError("upper_surface_relative_flow_mach must be finite and >= 1")
         if values["upper_surface_relative_flow_mach"] <= values["lower_surface_relative_flow_mach"]:
             raise ValueError("upper_surface_relative_flow_mach must exceed lower_surface_relative_flow_mach")
-        if values["requested_outlet_absolute_flow_mach"] is not None and (
-            not math.isfinite(values["requested_outlet_absolute_flow_mach"])
-            or values["requested_outlet_absolute_flow_mach"] <= 0.0):
-            raise ValueError("absolute requested_outlet_absolute_flow_mach must be positive and finite")
         if values["requested_outlet_relative_flow_mach"] is not None and (
             not math.isfinite(values["requested_outlet_relative_flow_mach"])
             or values["requested_outlet_relative_flow_mach"] <= 1.0):
-            raise ValueError("relative requested_outlet_relative_flow_mach must be finite and > 1")
+            raise ValueError("requested_outlet_relative_flow_mach must be finite and > 1")
         if not isinstance(values["fluid"], Fluid):
             raise TypeError("fluid must be an instance of Fluid")
         if not math.isfinite(values["inlet_total_temperature"]) or values["inlet_total_temperature"] <= 0.0:
@@ -656,9 +461,9 @@ class SupersonicRotorBlade:
         if values["match_real_outlet_mach"]:
             if not values["iterate_outlet_metal_angle"]:
                 raise ValueError("match_real_outlet_mach=True requires iterate_outlet_metal_angle=True")
-            requested_mach_name = f"requested_outlet_{flow_input_reference_frame}_flow_mach"
-            if values[requested_mach_name] is None:
-                raise ValueError(f"match_real_outlet_mach=True requires a {requested_mach_name} target")
+            if values["requested_outlet_relative_flow_mach"] is None:
+                raise ValueError(
+                    "match_real_outlet_mach=True requires a requested_outlet_relative_flow_mach target")
         if values["boundary_layer_mode"] not in ("fully_turbulent", "laminar_then_turbulent"):
             raise ValueError("invalid boundary_layer_mode")
 
@@ -679,8 +484,6 @@ class SupersonicRotorBlade:
 
         if values["mixing_solution"] not in (None, "subsonic"):
             raise ValueError("mixing_solution must be None or 'subsonic'")
-
-        return flow_input_reference_frame
 
     def _select_mixing_result(self, mixing: dict[str, dict[str, float | bool]]) \
             -> tuple[MixingSolution, dict[str, float | bool]]:
@@ -910,37 +713,7 @@ class SupersonicRotorBlade:
                 f"{angle_context}")
 
     def _solve_inlet_static_reference_state(self, *, initial_gamma: float) -> tuple[float, float, FluidState]:
-        """Find the self-consistent actual inlet static state.
-
-        The user supplies the stationary-frame total state and absolute Mach.
-        The iteration is required because the selected mixture's ideal-gas
-        Cp, and hence gamma, varies with the resulting static temperature.
-
-        :param float initial_gamma: First heat-capacity-ratio estimate from the total state.
-        :return: Static temperature, static pressure, and converged fluid state.
-        :rtype: tuple[float, float, FluidState]
-        :raises DesignConvergenceError: If mixture gamma does not converge.
-        """
-
-        def static_state(gamma: float) -> tuple[float, float, FluidState]:
-            """Return the inlet static state implied by one heat-capacity-ratio trial."""
-
-            temperature_factor = 1.0 + 0.5 * (gamma - 1.0) * self.ideal_inlet_absolute_flow_mach**2
-            static_temperature = self.inlet_total_temperature / temperature_factor
-            static_pressure = self.inlet_total_pressure / temperature_factor ** (gamma / (gamma - 1.0))
-            return static_temperature, static_pressure, self.fluid.properties(static_temperature, static_pressure)
-
-        # Accelerate the self-consistency between the isentropic state and CoolProp gamma with SciPy.
-        try:
-            gamma = float(fixed_point(lambda value: static_state(value)[2].gamma, initial_gamma,
-                                      xtol=1.0e-12, maxiter=100))
-        except RuntimeError as error:
-            raise DesignConvergenceError("mixture gamma did not converge at the inlet static state") from error
-        return static_state(gamma)
-
-    def _solve_inlet_static_reference_state_from_relative(
-            self, *, initial_gamma: float) -> tuple[float, float, FluidState]:
-        """Find the inlet static state when the rotor-relative flow is supplied.
+        """Find the inlet static state from the supplied rotor-relative flow.
 
         Absolute stagnation temperature is retained as the thermodynamic reference. For each gamma trial, the
         absolute/relative velocity triangle and total-to-static temperature relation reduce to a quadratic in
@@ -990,189 +763,6 @@ class SupersonicRotorBlade:
         except RuntimeError as error:
             raise DesignConvergenceError("mixture gamma did not converge at the inlet static state") from error
         return static_state(gamma)
-
-    def _absolute_outlet_to_relative_angle(self, *, absolute_flow_angle: float, relative_flow_mach: float) -> float:
-        """Return the relative direction represented by an absolute angle.
-
-        The inviscid exit Mach is a relative Mach in the NASA TN D-4421 formulation.
-        At fixed radius, the axial velocity is unchanged by the frame
-        transformation and the wheel speed is added to the relative
-        tangential component:
-
-        ``V_x = W*cos(beta)`` and ``V_theta = W*sin(beta) + U``.
-
-        Solving those equations for ``beta`` provides the zero-deviation metal
-        angle used when outlet-angle iteration is disabled.
-
-        :param float absolute_flow_angle: Requested stationary-frame outlet angle, degrees.
-        :param float relative_flow_mach: Ideal rotor-relative outlet Mach number.
-        :return: Corresponding rotor-relative outlet angle, degrees.
-        :rtype: float
-        :raises DesignConvergenceError: If the velocity triangle has no angle in the NASA TN D-4421 range.
-        """
-
-        temperature_factor = 1.0 + 0.5 * (self.gamma - 1.0) * relative_flow_mach**2
-        static_temperature = self.relative_inlet_total_temperature / temperature_factor
-        sound_speed = math.sqrt(self.gamma * self.fluid.specific_gas_constant * static_temperature)
-        relative_speed = relative_flow_mach * sound_speed
-        absolute_flow_angle_rad = math.radians(absolute_flow_angle)
-        sine_difference = -self.wheel_speed * math.cos(absolute_flow_angle_rad) / relative_speed
-        if abs(sine_difference) > 1.0 + 1.0e-12:
-            raise DesignConvergenceError(
-                "the requested absolute outlet angle cannot be produced by "
-                "the specified relative outlet Mach and wheel speed")
-        relative_flow_angle_rad = absolute_flow_angle_rad + math.asin(min(max(sine_difference, -1.0), 1.0))
-        relative_flow_angle = math.degrees(relative_flow_angle_rad)
-        if not -90.0 < relative_flow_angle < 0.0:
-            raise DesignConvergenceError(
-                "the requested absolute outlet state converts to a relative "
-                "angle outside the NASA TN D-4421 geometry range (-90, 0 degrees)")
-        return relative_flow_angle
-
-    def _absolute_outlet_state_to_relative(self, *, absolute_flow_mach: float,
-                                           absolute_flow_angle: float) -> dict[str, float]:
-        """Transform a specified ideal absolute outlet state to the rotor.
-
-        The input Mach fixes ``V/a`` but not the dimensional velocity because
-        outlet static temperature is not an independent API input. At constant
-        mean radius, relative total temperature (rothalpy) is conserved. With
-        frozen gamma this makes ``sqrt(T)`` the positive root of a quadratic,
-        after which the ordinary velocity triangle gives ``W``, ``M_rel``,
-        and ``beta``.
-
-        :param float absolute_flow_mach: Specified ideal stationary-frame outlet Mach number.
-        :param float absolute_flow_angle: Specified stationary-frame outlet angle, degrees.
-        :return: Absolute and relative state quantities required by the design.
-        :rtype: dict[str, float]
-        :raises DesignConvergenceError: If the rothalpy relation or velocity triangle has no physical root.
-        """
-
-        gamma = self.gamma
-        gas_constant = self.fluid.specific_gas_constant
-        absolute_flow_angle_rad = math.radians(absolute_flow_angle)
-        temperature_coefficient = 1.0 + 0.5 * (gamma - 1.0) * absolute_flow_mach**2
-        cross_coefficient = (absolute_flow_mach * self.wheel_speed * math.sin(absolute_flow_angle_rad) * (gamma - 1.0)
-                             / math.sqrt(gamma * gas_constant))
-        wheel_temperature = self.wheel_speed**2 * (gamma - 1.0) / (2.0 * gamma * gas_constant)
-        discriminant = cross_coefficient**2 - 4.0 * temperature_coefficient * (
-            wheel_temperature - self.relative_inlet_total_temperature)
-        if discriminant < -1.0e-10:
-            raise DesignConvergenceError(
-                "the specified absolute outlet Mach and angle have no "
-                "physical state at this wheel speed and relative total "
-                "temperature")
-        root_temperature = (cross_coefficient + math.sqrt(max(discriminant, 0.0))) / (2.0 * temperature_coefficient)
-        if root_temperature <= 0.0:
-            raise DesignConvergenceError("the specified absolute outlet state gives a non-positive static temperature")
-
-        static_temperature = root_temperature**2
-        sound_speed = math.sqrt(gamma * gas_constant * static_temperature)
-        absolute_speed = absolute_flow_mach * sound_speed
-        absolute_axial_velocity = absolute_speed * math.cos(absolute_flow_angle_rad)
-        absolute_tangential_velocity = absolute_speed * math.sin(absolute_flow_angle_rad)
-        relative_axial_velocity = absolute_axial_velocity
-        relative_tangential_velocity = absolute_tangential_velocity - self.wheel_speed
-        relative_speed = math.hypot(relative_axial_velocity, relative_tangential_velocity)
-        relative_flow_angle_rad = math.atan2(relative_tangential_velocity, relative_axial_velocity)
-        relative_flow_angle = math.degrees(relative_flow_angle_rad)
-        if not -90.0 < relative_flow_angle < 0.0:
-            raise DesignConvergenceError("the specified absolute outlet state converts to a relative "
-                                         "angle outside the NASA TN D-4421 geometry range (-90, 0 degrees)")
-        return {"absolute_flow_mach": absolute_flow_mach,
-                "absolute_flow_angle": absolute_flow_angle,
-                "relative_flow_mach": relative_speed / sound_speed,
-                "relative_flow_angle": relative_flow_angle,
-                "static_temperature": static_temperature,
-                "sound_speed": sound_speed}
-
-    def _ideal_outlet_relative_flow_mach_for_metal_angle(self, outlet_metal_angle: float) -> float:
-        """Resolve the ideal relative outlet Mach for one metal-angle trial.
-
-        A relative-frame target directly fixes the ideal relative Mach. For an
-        absolute-frame target, changing the trial metal angle changes the ideal
-        relative flow direction, velocity triangle, and relative Mach. The
-        frozen-gamma rothalpy relation reduces that conversion to a quadratic
-        in relative speed. The supersonic physical branch accepted by the NASA
-        TN D-4421 geometry is returned.
-
-        :param float outlet_metal_angle: Trial outlet metal angle, degrees.
-        :return: Ideal rotor-relative Mach for the selected input frame.
-        :rtype: float
-        :raises DesignConvergenceError: If no admissible supersonic relative state exists.
-        """
-
-        if self.flow_input_reference_frame == "relative":
-            if self._requested_outlet_relative_flow_mach is None:
-                return self.ideal_inlet_relative_flow_mach
-            return self._requested_outlet_relative_flow_mach
-
-        if self._requested_outlet_absolute_flow_mach is None:
-            return self.ideal_inlet_relative_flow_mach
-
-        absolute_flow_mach = self._requested_outlet_absolute_flow_mach
-        gamma = self.gamma
-        gas_constant = self.fluid.specific_gas_constant
-        outlet_metal_angle_rad = math.radians(outlet_metal_angle)
-        total_sound_speed_squared = gamma * gas_constant * self.relative_inlet_total_temperature
-        coefficient_a = 1.0 + 0.5 * (gamma - 1.0) * absolute_flow_mach**2
-        coefficient_b = 2.0 * self.wheel_speed * math.sin(outlet_metal_angle_rad)
-        coefficient_c = self.wheel_speed**2 - absolute_flow_mach**2 * total_sound_speed_squared
-        discriminant = coefficient_b**2 - 4.0 * coefficient_a * coefficient_c
-        if discriminant < -1.0e-10:
-            raise DesignConvergenceError(
-                "trial outlet metal angle has no physical relative state for the specified absolute outlet Mach")
-
-        square_root = math.sqrt(max(discriminant, 0.0))
-        relative_speed_candidates = ((-coefficient_b + square_root) / (2.0 * coefficient_a),
-                                     (-coefficient_b - square_root) / (2.0 * coefficient_a))
-        relative_flow_mach_candidates: list[float] = []
-        for relative_speed in relative_speed_candidates:
-            if relative_speed <= 0.0:
-                continue
-            static_temperature = self.relative_inlet_total_temperature - (gamma - 1.0) * relative_speed**2 / (
-                2.0 * gamma * gas_constant)
-            if static_temperature <= 0.0:
-                continue
-            sound_speed = math.sqrt(gamma * gas_constant * static_temperature)
-            relative_flow_mach = relative_speed / sound_speed
-            if (relative_flow_mach >= 1.0
-                    and self.lower_surface_relative_flow_mach
-                    <= relative_flow_mach
-                    <= self.upper_surface_relative_flow_mach):
-                relative_flow_mach_candidates.append(relative_flow_mach)
-
-        if not relative_flow_mach_candidates:
-            raise DesignConvergenceError("the specified absolute outlet Mach does not produce a "
-                                         "supersonic relative outlet Mach within the selected "
-                                         "surface-Mach interval at this outlet metal angle")
-        return max(relative_flow_mach_candidates)
-
-    def _relative_flow_state_to_absolute(self, *, relative_flow_mach: float,
-                                         relative_flow_angle_rad: float) -> dict[str, float]:
-        """Transform one rotor-relative state to the fixed frame.
-
-        :param float relative_flow_mach: Rotor-relative Mach number.
-        :param float relative_flow_angle_rad: Rotor-relative flow angle, radians.
-        :return: Relative and absolute Mach numbers and flow angles.
-        :rtype: dict[str, float]
-        """
-
-        temperature_factor = 1.0 + 0.5 * (self.gamma - 1.0) * relative_flow_mach**2
-        static_temperature = self.relative_inlet_total_temperature / temperature_factor
-        sound_speed = math.sqrt(self.gamma * self.fluid.specific_gas_constant * static_temperature)
-        relative_speed = relative_flow_mach * sound_speed
-        relative_axial_velocity = relative_speed * math.cos(relative_flow_angle_rad)
-        relative_tangential_velocity = relative_speed * math.sin(relative_flow_angle_rad)
-        absolute_axial_velocity = relative_axial_velocity
-        absolute_tangential_velocity = relative_tangential_velocity + self.wheel_speed
-        absolute_speed = math.hypot(absolute_axial_velocity, absolute_tangential_velocity)
-        absolute_flow_angle_rad = math.atan2(absolute_tangential_velocity, absolute_axial_velocity)
-        return {"absolute_flow_mach": absolute_speed / sound_speed,
-                "absolute_axial_flow_mach": absolute_axial_velocity / sound_speed,
-                "absolute_flow_angle": math.degrees(absolute_flow_angle_rad),
-                "relative_flow_mach": relative_flow_mach,
-                "relative_axial_flow_mach": (relative_axial_velocity / sound_speed),
-                "relative_flow_angle": math.degrees(relative_flow_angle_rad)}
 
     def _dimensional_scale(self, ideal: BladeShape) -> _DimensionalScale:
         """Dimensionalize one ideal trial and calculate its chord Reynolds number.
@@ -1450,38 +1040,31 @@ class SupersonicRotorBlade:
         return outlet_metal_angle
 
     def _flow_residual_for_outlet_metal_angle(self, outlet_metal_angle: float, *,
-        ideal_outlet_relative_flow_mach: float | None = None) -> float:
-        """Return selected mixed-flow angle minus the requested angle.
+        ideal_outlet_relative_flow_mach: float) -> float:
+        """Return mixed relative-flow angle minus the requested angle.
 
         :param float outlet_metal_angle: Trial outlet metal angle, degrees.
-        :param float | None ideal_outlet_relative_flow_mach: Fixed ideal relative outlet Mach, or ``None`` to derive it
-            from the requested outlet Mach in the selected input frame.
-        :return: Outlet flow-angle residual in the selected input frame, degrees.
+        :param float ideal_outlet_relative_flow_mach: Fixed ideal relative outlet Mach.
+        :return: Rotor-relative outlet flow-angle residual, degrees.
         :rtype: float
         :raises DesignConvergenceError: If the selected aftermixing solution is unavailable.
         """
 
-        if ideal_outlet_relative_flow_mach is None:
-            ideal_outlet_relative_flow_mach = self._ideal_outlet_relative_flow_mach_for_metal_angle(outlet_metal_angle)
         mixing = self._evaluate(ideal_outlet_relative_flow_mach, outlet_metal_angle).mixing
         _, selected = self._select_mixing_result(mixing)
         if not bool(selected["available"]):
             raise DesignConvergenceError("selected aftermixing solution is unavailable")
-        frame = self.flow_input_reference_frame
-        selected_angle = float(selected[f"real_outlet_{frame}_flow_angle"])
-        requested_angle = float(getattr(self, f"requested_outlet_{frame}_flow_angle"))
-        return selected_angle - requested_angle
+        return float(selected["real_outlet_relative_flow_angle"]) - self.requested_outlet_relative_flow_angle
 
     def _solve_outlet_metal_angle_for_target_flow(
-            self, *, ideal_outlet_relative_flow_mach: float | None = None) -> float:
+            self, *, ideal_outlet_relative_flow_mach: float) -> float:
         """Find the metal angle that matches the requested mixed outlet direction.
 
         SciPy's bounded nonlinear least-squares solver starts from the
         requested relative outlet direction and follows the fixed-mesh
         residual.
 
-        :param float | None ideal_outlet_relative_flow_mach: Fixed ideal relative Mach, or ``None`` to recompute it for
-            each angle from the requested outlet Mach in the selected input frame.
+        :param float ideal_outlet_relative_flow_mach: Fixed ideal relative outlet Mach.
         :return: Converged outlet metal angle, degrees.
         :rtype: float
         :raises DesignConvergenceError: If the requested mixed angle is unattainable.
@@ -1511,7 +1094,7 @@ class SupersonicRotorBlade:
             f"target mixed outlet angle did not converge; final residual was {final_residual:.4f} deg")
 
     def _solve_outlet_metal_angle_and_flow_mach_targets(self) -> tuple[float, float]:
-        """Match mixed outlet angle and Mach in the selected input frame.
+        """Match the mixed rotor-relative outlet angle and Mach.
 
         SciPy's bounded nonlinear least-squares solver varies outlet metal
         angle and ideal relative outlet Mach together. Thus the two mixed-flow
@@ -1523,12 +1106,11 @@ class SupersonicRotorBlade:
         :raises DesignConvergenceError: If no physical coupled solution converges.
         """
 
-        frame = self.flow_input_reference_frame
-        target_real_outlet_flow_mach = getattr(self, f"_requested_outlet_{frame}_flow_mach")
+        target_real_outlet_flow_mach = self.requested_outlet_relative_flow_mach
         if target_real_outlet_flow_mach is None:
             raise DesignConvergenceError("a mixed outlet Mach target was not supplied")
         target_real_outlet_flow_mach = float(target_real_outlet_flow_mach)
-        target_real_outlet_flow_angle = float(getattr(self, f"requested_outlet_{frame}_flow_angle"))
+        target_real_outlet_flow_angle = self.requested_outlet_relative_flow_angle
         lower_ideal_outlet_relative_flow_mach = max(1.0 + 1.0e-5, self.lower_surface_relative_flow_mach + 1.0e-5)
         upper_ideal_outlet_relative_flow_mach = self.upper_surface_relative_flow_mach - 1.0e-5
         if upper_ideal_outlet_relative_flow_mach <= lower_ideal_outlet_relative_flow_mach:
@@ -1538,14 +1120,8 @@ class SupersonicRotorBlade:
         # Treating the requested mixed state temporarily as an ideal state gives
         # a physically informed initial trial. BL mixing corrections are normally
         # small enough for this to lie in the basin of the coupled solution.
-        if frame == "absolute":
-            initial_state = self._absolute_outlet_state_to_relative(absolute_flow_mach=target_real_outlet_flow_mach,
-                absolute_flow_angle=target_real_outlet_flow_angle)
-            initial_outlet_metal_angle = initial_state["relative_flow_angle"]
-            initial_ideal_outlet_relative_flow_mach = initial_state["relative_flow_mach"]
-        else:
-            initial_outlet_metal_angle = target_real_outlet_flow_angle
-            initial_ideal_outlet_relative_flow_mach = target_real_outlet_flow_mach
+        initial_outlet_metal_angle = target_real_outlet_flow_angle
+        initial_ideal_outlet_relative_flow_mach = target_real_outlet_flow_mach
         variables = np.asarray([min(max(initial_outlet_metal_angle, -88.5), -1.5),
                                 min(max(initial_ideal_outlet_relative_flow_mach,
                                         lower_ideal_outlet_relative_flow_mach),
@@ -1555,7 +1131,7 @@ class SupersonicRotorBlade:
             """Evaluate angle and Mach residuals for one solver trial.
 
             :param numpy.ndarray values: Relative metal angle and ideal relative Mach trial.
-            :return: Mixed-flow angle and Mach residuals in the selected input frame.
+            :return: Mixed rotor-relative flow-angle and Mach residuals.
             :rtype: numpy.ndarray
             """
 
@@ -1566,8 +1142,8 @@ class SupersonicRotorBlade:
             if not bool(selected["available"]):
                 raise DesignConvergenceError("selected aftermixing solution is unavailable")
             result = np.asarray([
-                float(selected[f"real_outlet_{frame}_flow_angle"]) - target_real_outlet_flow_angle,
-                float(selected[f"real_outlet_{frame}_flow_mach"]) - target_real_outlet_flow_mach], dtype=float)
+                float(selected["real_outlet_relative_flow_angle"]) - target_real_outlet_flow_angle,
+                float(selected["real_outlet_relative_flow_mach"]) - target_real_outlet_flow_mach], dtype=float)
             if not np.all(np.isfinite(result)):
                 raise DesignConvergenceError("selected aftermixing solution is not physical")
             return result
@@ -1596,7 +1172,7 @@ class SupersonicRotorBlade:
             return float(solution.x[0]), float(solution.x[1])
         raise DesignConvergenceError(
             "coupled outlet angle/Mach solve did not converge; final "
-            f"{frame} angle residual={final_residual[0]:.6g} deg and "
+            f"relative angle residual={final_residual[0]:.6g} deg and "
             f"Mach residual={final_residual[1]:.6g}")
 
     def _aftermixing(self, *, ideal_outlet_relative_flow_mach: float,
@@ -1615,7 +1191,7 @@ class SupersonicRotorBlade:
         :param BoundaryLayerResult pressure_bl: Pressure-side BL result.
         :param BoundaryLayerResult suction_bl: Suction-side BL result.
         :param float trailing_edge_thickness: Nondimensional finite trailing-edge thickness.
-        :return: Subsonic and supersonic mixing solutions with relative and absolute quantities.
+        :return: Subsonic and supersonic mixing solutions with rotor-relative quantities.
         :rtype: dict[str, dict[str, float | bool]]
         :raises BoundaryLayerError: If blockage closes the passage or the conservation equation has no real solution.
         """
@@ -1666,27 +1242,20 @@ class SupersonicRotorBlade:
                     "available": False,
                     "ideal_outlet_relative_axial_flow_mach": ideal_outlet_relative_axial_flow_mach,
                     "trailing_edge_blockage_ratio": (trailing_edge_blockage_ratio),
-                    "real_outlet_absolute_flow_mach": math.nan,
-                    "real_outlet_absolute_axial_flow_mach": math.nan,
-                    "real_outlet_absolute_flow_angle": math.nan,
                     "real_outlet_relative_flow_mach": math.nan,
                     "real_outlet_relative_axial_flow_mach": math.nan,
                     "real_outlet_relative_flow_angle": math.nan}
                 continue
             real_outlet_relative_flow_mach = math.sqrt((2.0 / gp * total_velocity_ratio**2) / denominator)
             real_outlet_relative_flow_angle_rad = math.atan2(d_value, axial_velocity_ratio)
-            mixed_state = self._relative_flow_state_to_absolute(relative_flow_mach=real_outlet_relative_flow_mach,
-                relative_flow_angle_rad=real_outlet_relative_flow_angle_rad)
             results[name] = {
                 "available": True,
                 "ideal_outlet_relative_axial_flow_mach": ideal_outlet_relative_axial_flow_mach,
                 "trailing_edge_blockage_ratio": trailing_edge_blockage_ratio,
-                "real_outlet_absolute_flow_mach": mixed_state["absolute_flow_mach"],
-                "real_outlet_absolute_axial_flow_mach": mixed_state["absolute_axial_flow_mach"],
-                "real_outlet_absolute_flow_angle": mixed_state["absolute_flow_angle"],
-                "real_outlet_relative_flow_mach": mixed_state["relative_flow_mach"],
-                "real_outlet_relative_axial_flow_mach": mixed_state["relative_axial_flow_mach"],
-                "real_outlet_relative_flow_angle": mixed_state["relative_flow_angle"]}
+                "real_outlet_relative_flow_mach": real_outlet_relative_flow_mach,
+                "real_outlet_relative_axial_flow_mach": (
+                    real_outlet_relative_flow_mach * math.cos(real_outlet_relative_flow_angle_rad)),
+                "real_outlet_relative_flow_angle": math.degrees(real_outlet_relative_flow_angle_rad)}
         return results
 
     def _assemble_cad_profile(self, shape: BladeShape) -> tuple[np.ndarray, np.ndarray]:

@@ -50,7 +50,7 @@ from SupersonicTurbineBlading import Fluid, SupersonicRotorBlade, SupersonicStat
 | Class | Engineering purpose |
 |---|---|
 | `Fluid` | Defines a fixed gas composition and returns properties from pure-fluid CoolProp calls. |
-| `SupersonicRotorBlade` | Designs and scales a vortex-flow rotor section from absolute or relative flow inputs. |
+| `SupersonicRotorBlade` | Designs and scales a vortex-flow rotor section from rotor-relative flow inputs. |
 | `SupersonicStatorNozzle` | Scales and designs a planar MOC or axisymmetric conical nozzle. |
 
 Construction of a rotor or stator object performs the complete selected design. Results are therefore available as
@@ -66,7 +66,7 @@ The package also exposes result containers useful in engineering scripts:
 | `BladeShapes`, `NozzleShapes` | Paired uncorrected and BL-corrected geometries in one coordinate scale. |
 | `DimensionalBladeShapes`, `DimensionalNozzleShapes` | Geometry in metres. |
 | `BoundaryLayerResult` | Boundary-layer thicknesses, freestream flow Mach and transition or separation data.        |
-| `FlowStateTable` | Printable comparison of the principal rotor flow states in both reference frames. |
+| `FlowStateTable` | Printable summary of the principal rotor-relative flow states. |
 | `StartingResult` | Rotor supersonic-starting limit and other design checks from NASA TN D-4421.               |
 
 Unless stated otherwise, dimensional inputs and outputs use SI units: pressure in Pa, temperature in K, mass flow in
@@ -205,10 +205,10 @@ component phase at its partial-pressure state and rejects liquid or two-phase st
 
 #### Introduction to the `SupersonicRotorBlade`
 
-`SupersonicRotorBlade` designs one two-dimensional section at the specified mean radius. The inlet and outlet flow
-states can be supplied in either the absolute frame or the rotor-relative frame. The two input sets are mutually
-exclusive. The class completes each velocity triangle and passes the rotor-relative Mach numbers and angles to the
-blade-passage MOC tool that follows NASA TN D-4421.
+`SupersonicRotorBlade` designs one two-dimensional section at the specified mean radius. Inlet and outlet flow inputs
+are supplied in the rotor-relative frame used by the NASA reports. The class uses the velocity triangle internally to
+reconcile the stationary total state, then passes the relative Mach numbers and angles to the blade-passage MOC tool
+that follows NASA TN D-4421.
 
 The ideal passage consists of inlet transitions that convert uniform relative flow into a free-vortex distribution,
 constant-Mach circular pressure- and suction-surface arcs, and outlet transitions that return the flow to a uniform
@@ -246,15 +246,6 @@ common_rotor_inputs = dict(
 )
 
 blade = SupersonicRotorBlade(
-    ideal_inlet_absolute_flow_mach=2.80,              # far-field absolute inlet flow Mach
-    ideal_inlet_absolute_flow_angle=70.0,             # far-field absolute inlet flow angle
-    requested_outlet_absolute_flow_angle=-12.049849,  # ideal absolute outlet flow angle in this example
-    requested_outlet_absolute_flow_mach=0.987512,     # optional ideal absolute outlet flow Mach
-    **common_rotor_inputs,
-)
-
-# Alternative NASA TN D-4421 input convention: do not combine these with the four absolute-frame inputs above.
-relative_blade = SupersonicRotorBlade(
     ideal_inlet_relative_flow_mach=2.50,
     ideal_inlet_relative_flow_angle=70.0,
     requested_outlet_relative_flow_angle=-65.0,
@@ -263,8 +254,6 @@ relative_blade = SupersonicRotorBlade(
 )
 
 # Separate flow states and metal angles
-print(blade.ideal_inlet_absolute_flow_mach)
-print(blade.ideal_inlet_absolute_flow_angle)
 print(blade.ideal_inlet_relative_flow_mach)
 print(blade.ideal_inlet_relative_flow_angle)
 print(blade.real_inlet_relative_flow_mach)
@@ -293,26 +282,17 @@ ideal_profile_x_mm = blade.uncorrected_blade_profile_x_CAD
 ideal_profile_y_mm = blade.uncorrected_blade_profile_y_CAD
 ```
 
-Exactly one complete flow-input family must be supplied:
-
-| Input family | Required values |
-|---|---|
-| Absolute | `ideal_inlet_absolute_flow_mach`, `ideal_inlet_absolute_flow_angle`, and absolute outlet angle. |
-| Relative | `ideal_inlet_relative_flow_mach`, `ideal_inlet_relative_flow_angle`, and relative outlet angle. |
-
-The corresponding `requested_outlet_absolute_flow_mach` or `requested_outlet_relative_flow_mach` is optional.
-Omitting it selects the impulse assumption $M_{\mathrm{rel,out}}=M_{\mathrm{rel,in}}$. Supplying any member of both
-families raises `ValueError`; individual inlet or outlet quantities cannot be mixed across reference frames.
-After validation, the corresponding requested outlet angle in the other frame is also available as a property. When
-an outlet Mach is supplied, its transformed counterpart is stored as well; both requested Mach properties remain
-`None` when the impulse assumption is selected.
+The three required rotor flow inputs are `ideal_inlet_relative_flow_mach`, `ideal_inlet_relative_flow_angle` and
+`requested_outlet_relative_flow_angle`. The optional `requested_outlet_relative_flow_mach` specifies the ideal
+premixing outlet Mach. Omitting it selects the impulse assumption
+$M_{\mathrm{rel,out}}=M_{\mathrm{rel,in}}$.
 
 The remaining required inputs describe the machine, thermodynamic operating point and two constant-Mach surface
 arcs. The most important optional inputs used above are:
 
 | Input | Meaning                                                                                       |
 |---|-----------------------------------------------------------------------------------------------|
-| `requested_outlet_*_flow_mach` | Optional outlet Mach in the selected input frame; `None` selects impulse flow. |
+| `requested_outlet_relative_flow_mach` | Optional relative outlet Mach; `None` selects impulse flow. |
 | `number_of_nodes` | Nodes per nonzero MOC transition and constant-Mach circular arc; default 101. |
 | `leading_edge_thickness_over_total_pitch` | Ratio $t_{\mathrm{LE}}/G^{\ast}_{\mathrm{total}}$; default zero. |
 | `use_leading_edge_entry_correction` | Corrects inlet Mach and flow angle for finite thickness; default `True`. |
@@ -324,12 +304,9 @@ Useful properties available after construction include:
 |---|--------------------------------------------------------------------|
 | `inlet_static_temperature`, `inlet_static_pressure`, `gamma` | Inlet static reference state and frozen $\gamma$. |
 | `wheel_speed` | Blade speed $U$ at `mean_radius`.                                  |
-| `ideal_inlet_absolute_flow_mach`, `ideal_inlet_absolute_flow_angle` | Far-field absolute inlet flow state. |
 | `ideal_inlet_relative_flow_mach`, `ideal_inlet_relative_flow_angle` | Far-field relative inlet flow state. |
-| `real_inlet_absolute_flow_mach`, `real_inlet_absolute_flow_angle` | Absolute finite-thickness passage-entry state. |
 | `real_inlet_relative_flow_mach`, `real_inlet_relative_flow_angle` | Relative finite-thickness passage-entry state. |
 | `inlet_metal_angle` | Inlet metal angle in the stationary machine frame. |
-| `ideal_outlet_absolute_flow_mach`, `ideal_outlet_absolute_flow_angle` | Premixing absolute outlet flow state. |
 | `ideal_outlet_relative_flow_mach`, `ideal_outlet_relative_flow_angle` | Premixing relative outlet flow state. |
 | `outlet_metal_angle` | Outlet metal angle in the stationary machine frame. |
 | `max_flow_turning_increment` | Largest turning increment between adjacent MOC nodes, in degrees. |
@@ -340,46 +317,32 @@ Useful properties available after construction include:
 | `solidity` | Ideal axial chord divided by total blade pitch. |
 | `leading_edge_thickness`, `dimensional_leading_edge_thickness` | Nondimensional and dimensional LE thickness. |
 | `starting_result` | `StartingResult` when `calculate_starting=True`, otherwise `None`. |
-| `flow_state_table` | Printable inlet-to-outlet comparison of absolute and relative flow angles and Mach numbers. |
+| `flow_state_table` | Printable inlet-to-outlet summary of relative flow angles and Mach numbers. |
 
 `flow_state_table.rows` retains the numerical values for further use, while `print(blade.flow_state_table)` produces
-an aligned three-column engineering summary. The rows proceed from the ideal upstream inlet state through the real
+an aligned two-column engineering summary. The rows proceed from the ideal upstream inlet state through the real
 passage-entry state, the ideal premixing outlet state and the real aftermixed outlet state. Every angle row precedes
 the Mach-number row at the same station.
 
 `BladeShape.pressure_surface` and `BladeShape.suction_surface` are the two rotor `SurfaceCoordinates` objects. Each
-provides `x`, `y`, `relative_flow_mach` and `metal_angle` arrays at matching stations. `absolute_flow_mach` is `None`
-for these surfaces. The local `metal_angle` array is stored in degrees.
+provides `x`, `y`, `relative_flow_mach` and `metal_angle` arrays at matching stations. The local `metal_angle` array is
+stored in degrees.
 
 #### Theory of `SupersonicRotorBlade`
 
 ##### Reference frames and thermodynamic state
 
-The inlet API accepts either reference frame. For absolute inputs, the absolute velocity and wheel speed are
+The rotor flow API uses the relative frame. The supplied Mach and flow angle define
 
-$$V_x=V\cos\alpha, \qquad V_{\theta}=V\sin\alpha, \qquad U=\frac{2\pi r_m N}{60}.$$
+$$W_x=W\cos\beta, \qquad W_{\theta}=W\sin\beta, \qquad U=\frac{2\pi r_m N}{60}.$$
 
-The rotor-relative velocity triangle is
+The corresponding absolute velocity is used internally in the thermodynamic-state calculation:
 
-$$W_x=V_x, \qquad W_{\theta}=V_{\theta}-U, \qquad
-M_{\mathrm{rel}}=\frac{\sqrt{W_x^2+W_{\theta}^2}}{a}.$$
+$$V_x=W_x, \qquad V_{\theta}=W_{\theta}+U, \qquad
+M_{\mathrm{abs}}=\frac{\sqrt{V_x^2+V_{\theta}^2}}{a}.$$
 
-For relative inputs, the same triangle is evaluated in reverse:
-
-$$V_x=W_x, \qquad V_{\theta}=W_{\theta}+U.$$
-
-Because mixture heat capacity depends on temperature, the inlet static state and $\gamma$ are solved together:
-
-$$T_{\mathrm{in}}=\frac{T_{t,\mathrm{abs}}}
-{1+\frac{\gamma(T_{\mathrm{in}})-1}{2}M_{\mathrm{abs}}^2}, \qquad
-p_{\mathrm{in}}=\frac{p_{t,\mathrm{abs}}}
-{\left(1+\frac{\gamma-1}{2}M_{\mathrm{abs}}^2\right)^{\gamma/(\gamma-1)}}.$$
-
-The converged inlet-static $\gamma$ is frozen for the ideal geometry. The relative total state then follows from the
-same static state and the calculated relative Mach number.
-
-When the relative inlet state is supplied, the code retains the absolute stagnation temperature. With
-$q=\sqrt{T_{\mathrm{in}}}$, the temperature relation and velocity triangle give
+The specified thermodynamic reference is the absolute stagnation state. With $q=\sqrt{T_{\mathrm{in}}}$, the
+temperature relation and velocity triangle give
 
 $$Aq^2+Bq+C=0,$$
 
@@ -390,10 +353,16 @@ C=\frac{(\gamma-1)U^2}{2\gamma R}-T_{t,\mathrm{abs}}.$$
 The positive root supplies the equivalent absolute Mach and static state. CoolProp then updates $\gamma$, and the
 calculation repeats until the thermodynamic state and velocity triangle are consistent.
 
-At the exit, the MOC construction requires a relative flow Mach and flow direction. If
-`requested_outlet_absolute_flow_mach` is supplied, the class conserves relative total temperature at constant radius
-and solves the velocity triangle for the corresponding relative state. The relative input family supplies that state
-directly through `requested_outlet_relative_flow_angle` and optional `requested_outlet_relative_flow_mach`.
+The static pressure follows from the calculated absolute Mach:
+
+$$p_{\mathrm{in}}=\frac{p_{t,\mathrm{abs}}}
+{\left(1+\frac{\gamma-1}{2}M_{\mathrm{abs}}^2\right)^{\gamma/(\gamma-1)}}.$$
+
+The converged inlet-static $\gamma$ is frozen for the ideal geometry. The relative total state then follows from the
+same static state and the supplied relative Mach number.
+
+At the exit, `requested_outlet_relative_flow_angle` and the optional `requested_outlet_relative_flow_mach` directly
+define the MOC construction state.
 
 The current construction assumes zero incidence and zero deviation. Consequently, `inlet_metal_angle` is numerically
 equal to `real_inlet_relative_flow_angle`, while `outlet_metal_angle` is numerically equal to
@@ -513,11 +482,11 @@ from the throughflow Mach number: subsonic axial velocity will not cause a norma
 
 The ideal rotor design follows this sequence:
 
-1. `rotor_blade.py` validates one complete flow-input frame and constructs the paired inlet state in the other frame.
+1. `rotor_blade.py` validates the rotor-relative flow inputs and solves the inlet thermodynamic reference state.
 2. The finite-thickness entry model supplies the Mach and angle at the open passage entrance.
 3. `rotor_geometry.py` converts the four design Mach numbers to Prandtl-Meyer variables, builds every transition and
    vortex arc on its fixed-node mesh, and returns a nondimensional `BladeShape`.
-4. Mean radius and blade count establish pitch, $r^{\ast}$, physical chord and Reynolds number.
+4. Mean radius and blade count establish pitch, $r^{\ast}$, dimensional chord and Reynolds number.
 5. `rotor_starting.py` optionally evaluates the starting limit.
 6. `rotor_results.py` and `common_results.py` store the resulting geometry and design checks.
 
@@ -1015,17 +984,14 @@ automatic selection already chooses that solution whenever it is physical.
 #### Rotor aftermixing
 
 Rotor `AFMIX` is evaluated in the rotating frame using the corrected outlet pitch, the two surface thickness results
-and the calculated trailing-edge thickness. Each available mixed relative state is then transformed to the stationary
-frame by adding wheel speed to its tangential velocity.
+and the calculated trailing-edge thickness.
 
 `mixing_results["subsonic"]` and `mixing_results["supersonic"]` contain explicitly named fields for each available
-solution. They include `real_outlet_absolute_flow_mach`, `real_outlet_absolute_axial_flow_mach`,
-`real_outlet_absolute_flow_angle`, `real_outlet_relative_flow_mach`, `real_outlet_relative_axial_flow_mach` and
+solution. They include `real_outlet_relative_flow_mach`, `real_outlet_relative_axial_flow_mach` and
 `real_outlet_relative_flow_angle`. The selected-solution properties are:
 
 | Property | Meaning |
 |---|---|
-| `real_outlet_absolute_flow_mach`, `real_outlet_absolute_flow_angle` | Selected absolute mixed state. |
 | `real_outlet_relative_flow_mach`, `real_outlet_relative_flow_angle` | Selected relative mixed state. |
 | `ideal_outlet_relative_axial_flow_mach` | Relative axial Mach before mixing. |
 | `supersonic_mixing_available` | Whether the shockless supersonic solution is physically available. |
@@ -1058,9 +1024,7 @@ outlet pitch.
 
 Three rotor schemes are available.
 
-Both mixed-flow matching schemes use the reference frame of the selected rotor input family. They therefore target
-absolute aftermixed quantities for the absolute input set and relative aftermixed quantities for the relative input
-set.
+Both mixed-flow matching schemes target rotor-relative aftermixed quantities.
 
 ##### Mixed-flow angle matching
 
@@ -1070,21 +1034,17 @@ Set
 iterate_outlet_metal_angle=True
 ```
 
-to vary `outlet_metal_angle`, stored in the stationary frame, until the selected real aftermixed flow angle matches
-the requested outlet flow angle in the input reference frame:
+to vary `outlet_metal_angle`, stored in the stationary frame, until the real aftermixed relative flow angle matches
+the requested relative outlet flow angle:
 
-$$\alpha_{\mathrm{mixed}}-\alpha_{\mathrm{requested}}=0 \quad \text{(absolute input set)},$$
-
-$$\beta_{\mathrm{mixed}}-\beta_{\mathrm{requested}}=0 \quad \text{(relative input set)}.$$
+$$\beta_{\mathrm{mixed}}-\beta_{\mathrm{requested}}=0.$$
 
 The solver starts from the requested relative outlet direction. SciPy's bounded, derivative-based nonlinear
 least-squares method minimizes the residual.
 
-If a requested outlet Mach is supplied without Mach matching, it remains the specified ideal premixing Mach in the
-input reference frame. For the absolute input set, `ideal_outlet_relative_flow_mach` is recovered at each trial from
-the velocity triangle and constant-radius rothalpy relation. For the relative input set, the requested relative Mach
-is used directly. If the optional requested outlet Mach is omitted, `ideal_outlet_relative_flow_mach` remains equal
-to `ideal_inlet_relative_flow_mach`.
+If `requested_outlet_relative_flow_mach` is supplied without Mach matching, it remains the specified ideal premixing
+Mach throughout the angle iteration. If it is omitted, `ideal_outlet_relative_flow_mach` remains equal to
+`ideal_inlet_relative_flow_mach`.
 
 ##### Coupled mixed-flow angle and Mach matching
 
@@ -1093,22 +1053,18 @@ Set all three controls
 ```python
 iterate_outlet_metal_angle=True
 match_real_outlet_mach=True
-requested_outlet_absolute_flow_mach=1.20  # desired absolute mixed Mach
+requested_outlet_relative_flow_mach=2.50  # desired rotor-relative mixed Mach
 ```
 
-For the relative input set, use `requested_outlet_relative_flow_mach` instead; the same `match_real_outlet_mach` flag
-then interprets it as a relative aftermixed target. SciPy's bounded, derivative-based nonlinear least-squares method
-varies `ideal_outlet_relative_flow_mach` and `outlet_metal_angle` until the angle and Mach residuals vanish in the
-selected input frame:
+SciPy's bounded, derivative-based nonlinear least-squares method varies `ideal_outlet_relative_flow_mach` and
+`outlet_metal_angle` until both relative residuals vanish:
 
-$$M_{\mathrm{mixed},f}-M_{\mathrm{target},f}=0, \qquad
-\theta_{\mathrm{mixed},f}-\theta_{\mathrm{target},f}=0,$$
-
-where $f$ is the selected absolute or relative input frame.
+$$M_{\mathrm{mixed,rel}}-M_{\mathrm{target,rel}}=0, \qquad
+\beta_{\mathrm{mixed}}-\beta_{\mathrm{target}}=0.$$
 
 The final premixing values remain available as `ideal_outlet_relative_flow_mach` and
-`ideal_outlet_relative_flow_angle`. The aftermixed results remain available in both frames. The Mach-target flag
-requires `iterate_outlet_metal_angle=True` and the requested outlet Mach belonging to the selected input family.
+`ideal_outlet_relative_flow_angle`. The Mach-target flag requires `iterate_outlet_metal_angle=True` and a supplied
+`requested_outlet_relative_flow_mach`.
 
 ##### Legacy passage-pitch closure
 
@@ -1127,8 +1083,8 @@ This allows to keep the same leading and trailing edge thickness for the rotor b
 used. The first unbracketed update follows the legacy mass-continuity expression; once trial geometries exist on both
 sides of equal passage pitch, SciPy's bracketed Brent scheme refines the solution.
 
-In this mode, the requested outlet angle in the selected input frame is only the initial estimate, and the final outlet
-direction will generally differ. Construction therefore emits a warning. Passage-pitch closure is incompatible with
+In this mode, `requested_outlet_relative_flow_angle` is only the initial estimate, and the final outlet direction will
+generally differ. Construction therefore emits a warning. Passage-pitch closure is incompatible with
 `iterate_outlet_metal_angle=True` and
 `match_real_outlet_mach=True`. `passage_pitch_closure_iteration_count`,
 `passage_pitch_closure_outlet_metal_angle` and `passage_pitch_closure_residual` report the result.

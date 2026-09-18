@@ -10,13 +10,13 @@ from ..common_results import SurfaceCoordinates
 
 @dataclass(frozen=True)
 class FlowStateTable:
-    """Printable absolute/relative rotor flow-state comparison.
+    """Printable rotor-relative flow-state summary.
 
-    :ivar rows: Flow-quantity label, absolute value, and rotor-relative value for each row.
+    :ivar rows: Flow-quantity label and rotor-relative value for each row.
     """
 
-    rows: tuple[tuple[str, float, float], ...]
-    headers: ClassVar[tuple[str, str, str]] = ("Flow quantity", "Absolute frame", "Relative frame")
+    rows: tuple[tuple[str, float], ...]
+    headers: ClassVar[tuple[str, str]] = ("Flow quantity", "Relative frame")
 
     def __str__(self) -> str:
         """Format the flow states as an aligned plain-text table.
@@ -25,11 +25,11 @@ class FlowStateTable:
         :rtype: str
         """
 
-        formatted_rows = tuple((label, f"{absolute:.6g}", f"{relative:.6g}") for label, absolute, relative in self.rows)
+        formatted_rows = tuple((label, f"{relative:.6g}") for label, relative in self.rows)
         columns = (self.headers,) + formatted_rows
-        widths = tuple(max(len(row[index]) for row in columns) for index in range(3))
+        widths = tuple(max(len(row[index]) for row in columns) for index in range(2))
 
-        def format_row(row: tuple[str, str, str]) -> str:
+        def format_row(row: tuple[str, str]) -> str:
             return " | ".join(value.ljust(width) for value, width in zip(row, widths))
 
         separator = "-+-".join("-" * width for width in widths)

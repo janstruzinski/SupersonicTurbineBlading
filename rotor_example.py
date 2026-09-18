@@ -1,10 +1,9 @@
 """Small executable example of the object-oriented rotor designer.
 
 The fluid composition is independent of the operating point. Stationary-frame
-total conditions, absolute inlet velocity, RPM, and mean radius define the
-relative inlet state used by FORTRAN codes in NASA TN D-4421 and NASA TM X-2434.
-The complete inlet/outlet flow input set can alternatively be supplied in the
-rotor-relative frame used by the NASA reports.
+total conditions, rotor-relative flow inputs, RPM, and mean radius define the
+velocity triangles and the blade section. The flow-input convention follows
+NASA TN D-4421 and NASA TM X-2434.
 """
 
 from SupersonicTurbineBlading import Fluid, SupersonicRotorBlade
@@ -13,13 +12,13 @@ from SupersonicTurbineBlading import Fluid, SupersonicRotorBlade
 # CoolProp; the code never asks CoolProp to flash the binary mixture.
 working_fluid = Fluid(coolprop_names=["Water", "Oxygen"], mass_fractions=[0.54, 0.46])
 
-blade = SupersonicRotorBlade(ideal_inlet_absolute_flow_mach=2.2,  # ideal absolute inlet flow Mach
-    ideal_inlet_absolute_flow_angle=75.0,  # ideal absolute inlet flow angle
-    requested_outlet_absolute_flow_angle=-25,  # requested absolute outlet flow angle
+blade = SupersonicRotorBlade(ideal_inlet_relative_flow_mach=1.8,  # ideal rotor-relative inlet flow Mach
+    ideal_inlet_relative_flow_angle=65.0,  # ideal rotor-relative inlet flow angle
+    requested_outlet_relative_flow_angle=-65.0,  # requested rotor-relative outlet flow angle
     lower_surface_relative_flow_mach=1.1,  # relative pressure-surface flow Mach
     upper_surface_relative_flow_mach=2.2,  # relative suction-surface flow Mach
     blade_count=80,
-    mean_radius=0.15,  # [m], also sets physical chord and Reynolds number
+    mean_radius=0.15,  # [m], also sets dimensional chord and Reynolds number
     rotational_speed_rpm=30000.0,
     fluid=working_fluid,
     inlet_total_temperature=1000.0,  # absolute total temperature [K]
