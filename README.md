@@ -881,8 +881,10 @@ Stator controls and outputs are:
 For the conical contour, local Mach at every divergent-wall node is found by inverting the circular area-Mach relation.
 The same integral correction is then applied to its stored meridional walls.
 
-`stator.plot(dimensional=True)` rotates both the ideal and corrected shapes by `outlet_metal_angle` and displays
-coordinates in millimetres. Stored dimensional arrays remain in metres.
+`stator.plot(dimensional=True, show_two_nozzles=True)` rotates both the ideal and corrected shapes by
+`outlet_metal_angle` and displays coordinates in millimetres. By default, an adjacent passage is shifted upward by
+the total pitch. A vertical segment across the remaining gap shows the trailing-edge metal between the passages.
+Use `show_two_nozzles=False` for the single-passage view. Stored dimensional arrays remain in metres.
 
 #### Rotor boundary-layer correction
 

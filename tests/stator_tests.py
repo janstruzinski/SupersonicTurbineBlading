@@ -253,7 +253,7 @@ def test_conical_contour_reuses_bl_mixing_and_plotting_pipeline():
     assert math.isfinite(stator.real_outlet_absolute_flow_mach)
     figure, axes = stator.plot(dimensional=True, show=False)
     assert figure is axes.figure
-    assert len(axes.lines) == 4
+    assert len(axes.lines) == 10
 
 
 def test_conical_contour_supports_laminar_transition_mode():
@@ -483,11 +483,18 @@ def test_coupled_conical_iteration_varies_ideal_absolute_flow_mach():
     )
 
 
-def test_plot_uses_rotated_geometry_and_returns_four_lines():
-    stator = make_stator()
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {},
+        {"contour_method": "conical", "throat_height": None, "half_cone_metal_angle": 15.0},
+    ],
+)
+def test_plot_uses_total_pitch_and_closes_trailing_edge(overrides):
+    stator = make_stator(**overrides)
     figure, axes = stator.plot(dimensional=True, show=False)
     assert figure is axes.figure
-    assert len(axes.lines) == 4
+    assert len(axes.lines) == 10
 
     pressure = stator.dimensional_shapes.uncorrected.pressure_surface
     angle = math.radians(stator.outlet_metal_angle)
@@ -495,3 +502,25 @@ def test_plot_uses_rotated_geometry_and_returns_four_lines():
     assert math.isclose(axes.lines[0].get_xdata()[0], expected_axial, rel_tol=1.0e-12)
     assert axes.get_xlabel() == "axial length [mm]"
     assert axes.get_ylabel() == "tangential length [mm]"
+
+    for first_line, shape in ((0, stator.dimensional_shapes.uncorrected),
+                              (5, stator.dimensional_shapes.corrected)):
+        plotted_lines = axes.lines[first_line:first_line + 5]
+        lower_pressure, lower_suction, upper_pressure, upper_suction, trailing_edge = plotted_lines
+        total_pitch = 1000.0 * shape.total_pitch
+        trailing_edge_thickness = 1000.0 * shape.trailing_edge_thickness
+        assert np.allclose(upper_pressure.get_xdata(), lower_pressure.get_xdata())
+        assert np.allclose(upper_suction.get_xdata(), lower_suction.get_xdata())
+        assert np.allclose(upper_pressure.get_ydata() - lower_pressure.get_ydata(), total_pitch)
+        assert np.allclose(upper_suction.get_ydata() - lower_suction.get_ydata(), total_pitch)
+        assert math.isclose(trailing_edge.get_xdata()[0], trailing_edge.get_xdata()[1], abs_tol=1.0e-14)
+        assert math.isclose(trailing_edge.get_ydata()[0], lower_suction.get_ydata()[-1], rel_tol=1.0e-12)
+        assert math.isclose(trailing_edge.get_ydata()[1], upper_pressure.get_ydata()[-1], rel_tol=1.0e-12)
+        assert math.isclose(abs(np.diff(trailing_edge.get_ydata())[0]), trailing_edge_thickness, rel_tol=1.0e-12)
+
+
+def test_plot_can_retain_single_nozzle_passage_view():
+    stator = make_stator()
+    figure, axes = stator.plot(show_two_nozzles=False, show=False)
+    assert figure is axes.figure
+    assert len(axes.lines) == 4

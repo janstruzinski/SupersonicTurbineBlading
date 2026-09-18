@@ -965,10 +965,16 @@ class SupersonicStatorNozzle:
         sine = math.sin(angle_rad)
         return (surface.x * cosine - surface.y * sine, surface.x * sine + surface.y * cosine)
 
-    def plot(self, *, dimensional: bool = False, ax=None, show: bool = True):
+    def plot(self, *, dimensional: bool = False, show_two_nozzles: bool = True, ax=None, show: bool = True):
         """Plot both shapes after rotation by the final outlet metal angle.
 
+        With ``show_two_nozzles=True``, a copy of each passage is translated upward by its total pitch. A vertical
+        segment joins the original suction-surface exit to the translated pressure-surface exit, so the finite
+        trailing-edge metal between adjacent passages is visible. The connector uses the selected ideal or
+        BL-corrected geometry's trailing-edge thickness and line style.
+
         :param bool dimensional: Plot in millimetres instead of throat-based NASA TM X-1502 coordinates.
+        :param bool show_two_nozzles: Plot a second adjacent nozzle passage and its trailing-edge wall.
         :param ax: Existing Matplotlib axes, or ``None`` to create a figure.
         :type ax: matplotlib.axes.Axes | None
         :param bool show: Call ``matplotlib.pyplot.show`` before returning.
@@ -995,20 +1001,37 @@ class SupersonicStatorNozzle:
             axis_label = \
                 "coordinate / throat diameter" if self.contour_method == "conical" else "coordinate / throat half-width"
 
-
         if ax is None:
             figure, ax = plt.subplots()
         else:
             figure = ax.figure
         outlet_metal_angle_rad = math.radians(self.outlet_metal_angle)
-        for surface in (ideal.pressure_surface, ideal.suction_surface):
-            axial, tangential = self._rotate(surface, outlet_metal_angle_rad)
-            ax.plot(axial, tangential, "--", color="0.35", linewidth=1.4,
-                    label=("uncorrected" if surface is ideal.pressure_surface else None))
-        for surface in (corrected.pressure_surface, corrected.suction_surface):
-            axial, tangential = self._rotate(surface, outlet_metal_angle_rad)
-            ax.plot(axial, tangential, "-", color="#b23a48", linewidth=1.8,
-                    label=("BL corrected" if surface is corrected.pressure_surface else None))
+
+        def plot_shape(shape: NozzleShape, *, linestyle: str, color: str, linewidth: float, label: str) -> None:
+            """Draw one nozzle passage and, when requested, its upper periodic copy."""
+
+            pressure_axial, pressure_tangential = self._rotate(shape.pressure_surface, outlet_metal_angle_rad)
+            suction_axial, suction_tangential = self._rotate(shape.suction_surface, outlet_metal_angle_rad)
+            surfaces = ((pressure_axial, pressure_tangential), (suction_axial, suction_tangential))
+            if show_two_nozzles:
+                # Translate by the total pitch rather than the open passage pitch. The difference leaves the
+                # selected geometry's finite trailing-edge metal between adjacent nozzle passages.
+                surfaces += ((pressure_axial, pressure_tangential + shape.total_pitch),
+                    (suction_axial, suction_tangential + shape.total_pitch))
+            for index, (axial, tangential) in enumerate(surfaces):
+                ax.plot(axial, tangential, linestyle, color=color, linewidth=linewidth,
+                    label=label if index == 0 else None)
+
+            if show_two_nozzles:
+                # The two exit endpoints coincide axially apart from roundoff. Use their mean coordinate to make
+                # the plotted trailing-edge wall explicitly vertical while retaining both physical endpoints.
+                trailing_edge_axial = 0.5 * (suction_axial[-1] + pressure_axial[-1])
+                ax.plot([trailing_edge_axial, trailing_edge_axial],
+                    [suction_tangential[-1], pressure_tangential[-1] + shape.total_pitch],
+                    linestyle, color=color, linewidth=linewidth)
+
+        plot_shape(ideal, linestyle="--", color="0.35", linewidth=1.4, label="uncorrected")
+        plot_shape(corrected, linestyle="-", color="#b23a48", linewidth=1.8, label="BL corrected")
         ax.set_aspect("equal", adjustable="datalim")
         ax.set_xlabel(f"axial {axis_label}")
         ax.set_ylabel(f"tangential {axis_label}")

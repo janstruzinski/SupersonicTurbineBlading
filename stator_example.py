@@ -66,6 +66,7 @@ print(f"Calculated chord Reynolds number: {moc_stator.chord_reynolds_number:.3e}
 # Rotation into axial/tangential turbine coordinates occurs only for plotting;
 # stored geometry stays in the simpler nozzle-axis coordinate system.
 moc_stator.plot(dimensional=True,  # default: False; dimensional plot axes are in mm
+    show_two_nozzles=True,  # default: True; include the adjacent passage and trailing-edge wall
     ax=None,  # default: None; pass an existing Matplotlib axes if desired
     show=True)  # default: True
 
@@ -114,4 +115,4 @@ print(f"Calculated chord Reynolds number: {conical_stator.chord_reynolds_number:
 
 # The same plot method rotates the meridional conical contour by the stator
 # metal angle and overlays its corrected and uncorrected shapes.
-conical_stator.plot(dimensional=True, ax=None, show=True)
+conical_stator.plot(dimensional=True, show_two_nozzles=True, ax=None, show=True)
