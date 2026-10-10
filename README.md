@@ -825,8 +825,14 @@ Each `BoundaryLayerResult` contains:
 
 - `s_over_chord` and explicitly framed `freestream_absolute_flow_mach` or `freestream_relative_flow_mach`;
 - `displacement_thickness_over_chord` and `momentum_thickness_over_chord`;
-- transformed `form_factor` and the local `regime`;
-- `transition_index` and `separation_index` when the events occur.
+- compressible `form_factor` ($\delta^{\ast}/\theta$) and the local `regime` (`"laminar"`, `"turbulent"`, or `"separated"`);
+- `transition_index`, which marks natural transition or the assumed turbulent reattachment at imminent laminar separation;
+- `separation_index`, which marks the last stored station at or before a turbulent separation event. `None` means that no
+  turbulent separation was reported; the earlier laminar separation index is not retained after reattachment.
+
+The turbulent separation criterion is a transformed incompressible form factor of 2.8. This is not the same as a
+returned `form_factor`. Downstream of turbulent separation, the solver labels stations `"separated"` and holds the last
+calculated thicknesses and form factor constant for plotting. These downstream values do not model separated-flow growth.
 
 #### Stator boundary-layer correction
 

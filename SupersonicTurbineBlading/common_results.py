@@ -83,10 +83,15 @@ class BoundaryLayerResult:
     :ivar freestream_relative_flow_mach: Rotor-relative freestream flow Mach, or ``None`` for a stator boundary layer.
     :ivar displacement_thickness_over_chord: Compressible displacement thickness divided by chord, -.
     :ivar momentum_thickness_over_chord: Compressible momentum thickness divided by chord, -.
-    :ivar form_factor: Incompressible transformed boundary-layer form factor, -.
-    :ivar regime: ``"laminar"`` or ``"turbulent"`` at every station.
+    :ivar form_factor: Compressible form factor ``delta*/theta``, -.
+    :ivar regime: ``"laminar"``, ``"turbulent"``, or ``"separated"`` at each station.
+        Downstream separated stations retain the last calculated integral quantities for plotting.
     :ivar transition_index: First turbulent station, or ``None`` when transition does not occur.
-    :ivar separation_index: First separated station, or ``None`` when separation does not occur.
+        Natural-transition mode also starts turbulent flow at imminent laminar separation,
+        assuming immediate reattachment with unchanged momentum thickness.
+    :ivar separation_index: Last stored station at or before the turbulent separation event, or ``None``
+        when no turbulent separation is reported. The laminar separation index is not retained
+        after the assumed turbulent reattachment.
     """
 
     s_over_chord: FloatArray
