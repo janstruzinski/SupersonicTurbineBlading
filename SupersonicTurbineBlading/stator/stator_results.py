@@ -76,19 +76,15 @@ class NozzleShapes:
 
 @dataclass(frozen=True)
 class DimensionalNozzleShapes:
-    """Store dimensional stator passages and the pitch-derived machine scale.
+    """Store dimensional stator passages and the reference-length scale.
 
-    :ivar float mean_radius: Stator mean radius, m.
-    :ivar float partial_admission_fraction: Fraction of the turbine perimeter occupied by nozzles.
-    :ivar int nozzle_count: Number of equal nozzles in the admitted arc.
+    :ivar float reference_length: Uncorrected MOC open circumferential exit width or conical throat diameter, m.
     :ivar float dimensional_scale_factor: Metres represented by one nondimensional coordinate unit.
     :ivar NozzleShape uncorrected: Ideal nozzle coordinates in metres.
     :ivar NozzleShape corrected: Boundary-layer-corrected nozzle coordinates in metres.
     """
 
-    mean_radius: float
-    partial_admission_fraction: float
-    nozzle_count: int
+    reference_length: float
     dimensional_scale_factor: float
     uncorrected: NozzleShape
     corrected: NozzleShape

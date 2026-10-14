@@ -16,13 +16,11 @@ def make_stator(**overrides):
     inputs = dict(
         requested_outlet_absolute_flow_mach=1.77,
         requested_outlet_absolute_flow_angle=70.0,
-        nozzle_count=30,
-        mean_radius=0.2,
-        throat_height=0.05,
+        reference_length=0.04,
         fluid=Fluid(["Air"], [1.0]),
         upstream_total_temperature=900.0,
         upstream_total_pressure=1.0e6,
-        trailing_edge_thickness_over_total_pitch=0.05,
+        trailing_edge_thickness=0.002,
         number_of_nodes=41,
         iterate_outlet_metal_angle=False,
         boundary_layer_mode="fully_turbulent",
@@ -122,44 +120,58 @@ def test_gamma_is_evaluated_at_self_consistent_static_throat():
     assert stator.gamma == stator.throat_static_fluid_state.gamma
 
 
-def test_total_pitch_scaling_and_mass_flow_follow_machine_geometry_and_choked_relation():
-    stator = make_stator()
-    gamma = stator.gamma
-    gas_constant = stator.fluid.specific_gas_constant
-    expected_flux = (
-        stator.upstream_total_pressure
-        / math.sqrt(stator.upstream_total_temperature)
-        * math.sqrt(gamma / gas_constant)
-        * (2.0 / (gamma + 1.0)) ** ((gamma + 1.0) / (2.0 * (gamma - 1.0)))
-    )
-    expected_admitted_perimeter = 2.0 * math.pi * stator.mean_radius * stator.partial_admission_fraction
-    expected_total_pitch = expected_admitted_perimeter / stator.nozzle_count
+@pytest.mark.parametrize("contour_method", ["moc", "conical"])
+def test_reference_length_sets_geometry_scale_and_metal_is_added_to_open_pitch(contour_method):
+    options = {} if contour_method == "moc" else {"half_cone_metal_angle": 15.0}
+    stator = make_stator(contour_method=contour_method, **options)
     nondimensional = stator.nondimensional_shapes.uncorrected
     dimensional = stator.dimensional_shapes.uncorrected
-    expected_area = stator.nozzle_count * dimensional.throat_width * stator.throat_height
-
-    assert math.isclose(stator.dimensional_admitted_perimeter, expected_admitted_perimeter, rel_tol=1.0e-12)
+    if contour_method == "moc":
+        assert math.isclose(dimensional.nozzle_passage_pitch, stator.reference_length, rel_tol=1.0e-12)
+    else:
+        assert math.isclose(dimensional.throat_width, stator.reference_length, rel_tol=1.0e-12)
+    expected_open_pitch = dimensional.nozzle_exit_width / math.cos(math.radians(stator.outlet_metal_angle))
+    expected_total_pitch = expected_open_pitch + stator.trailing_edge_thickness
+    assert math.isclose(dimensional.nozzle_passage_pitch, expected_open_pitch, rel_tol=1.0e-12)
     assert math.isclose(stator.dimensional_total_pitch, expected_total_pitch, rel_tol=1.0e-12)
     assert math.isclose(dimensional.total_pitch, expected_total_pitch, rel_tol=1.0e-12)
-    assert math.isclose(dimensional.nozzle_passage_pitch + dimensional.trailing_edge_thickness,
-                        expected_total_pitch, rel_tol=1.0e-12)
+    assert math.isclose(dimensional.trailing_edge_thickness, stator.trailing_edge_thickness, rel_tol=1.0e-12)
     assert math.isclose(stator.dimensional_scale_factor,
                         expected_total_pitch / nondimensional.total_pitch, rel_tol=1.0e-12)
-    assert math.isclose(stator.dimensional_total_throat_area, expected_area, rel_tol=1.0e-12)
-    assert math.isclose(stator.mass_flow_rate, expected_flux * expected_area, rel_tol=1.0e-12)
+    assert math.isclose(stator.dimensional_shapes.reference_length, stator.reference_length, rel_tol=1.0e-12)
+    assert np.allclose(stator.dimensional_shapes.corrected.suction_surface.x,
+                       stator.nondimensional_shapes.corrected.suction_surface.x * stator.dimensional_scale_factor)
 
 
-def test_partial_admission_scales_total_pitch_throat_area_and_mass_flow():
-    full = make_stator(partial_admission_fraction=1.0)
-    half = make_stator(partial_admission_fraction=0.5)
+@pytest.mark.parametrize("contour_method", ["moc", "conical"])
+def test_reference_length_scales_ideal_contour_independently_of_trailing_edge_metal(contour_method):
+    options = {} if contour_method == "moc" else {"half_cone_metal_angle": 15.0}
+    original = make_stator(contour_method=contour_method, trailing_edge_thickness=0.004, **options)
+    doubled = make_stator(contour_method=contour_method, reference_length=0.08,
+                          trailing_edge_thickness=0.004, **options)
 
-    assert math.isclose(half.dimensional_admitted_perimeter,
-                        0.5 * full.dimensional_admitted_perimeter, rel_tol=1.0e-12)
-    assert math.isclose(half.dimensional_total_pitch, 0.5 * full.dimensional_total_pitch, rel_tol=1.0e-12)
-    assert math.isclose(half.dimensional_scale_factor, 0.5 * full.dimensional_scale_factor, rel_tol=1.0e-12)
-    assert math.isclose(half.dimensional_total_throat_area,
-                        0.5 * full.dimensional_total_throat_area, rel_tol=1.0e-12)
-    assert math.isclose(half.mass_flow_rate, 0.5 * full.mass_flow_rate, rel_tol=1.0e-12)
+    assert math.isclose(doubled.dimensional_scale_factor, 2.0 * original.dimensional_scale_factor, rel_tol=1.0e-12)
+    assert np.allclose(doubled.dimensional_shapes.uncorrected.pressure_surface.x,
+                       2.0 * original.dimensional_shapes.uncorrected.pressure_surface.x)
+    assert math.isclose(doubled.dimensional_shapes.uncorrected.trailing_edge_thickness,
+                        original.dimensional_shapes.uncorrected.trailing_edge_thickness, rel_tol=1.0e-12)
+
+
+@pytest.mark.parametrize("options, chord, reynolds_number, real_flow_angle, real_flow_mach", [
+    ({"reference_length": 0.03979350694547071}, 0.05432331459426887, 1997057.033343444,
+     70.91712074713297, 1.7303884409586916),
+    ({"contour_method": "conical", "half_cone_metal_angle": 15.0, "reference_length": 0.011407974664919045},
+     0.041503037702172785, 1525752.5054810734, 71.07286177917304, 1.735093944092742),
+])
+def test_equivalent_dimensions_preserve_existing_bl_and_aftermixing_results(
+        options, chord, reynolds_number, real_flow_angle, real_flow_mach):
+    # Preserve the previous pitch-sized design's physical dimensions to compare both scaling routes at the same
+    # operating point. Its throat Reynolds scale, BL correction, and aftermixed state should remain unchanged.
+    stator = make_stator(trailing_edge_thickness=0.002094395102393196, **options)
+    assert math.isclose(stator.dimensional_chord, chord, rel_tol=1.0e-12)
+    assert math.isclose(stator.chord_reynolds_number, reynolds_number, rel_tol=1.0e-12)
+    assert math.isclose(stator.real_outlet_absolute_flow_angle, real_flow_angle, rel_tol=1.0e-10)
+    assert math.isclose(stator.real_outlet_absolute_flow_mach, real_flow_mach, rel_tol=1.0e-10)
 
 
 def test_moc_stores_ideal_uncorrected_and_corrected_area_ratios():
@@ -208,7 +220,6 @@ def test_stores_corrected_uncorrected_and_dimensional_shapes():
 
 def test_conical_contour_reuses_bl_mixing_and_plotting_pipeline():
     stator = make_stator(
-        throat_height=None,
         contour_method="conical",
         half_cone_metal_angle=15.0,
     )
@@ -225,11 +236,7 @@ def test_conical_contour_reuses_bl_mixing_and_plotting_pipeline():
         expected_area_ratio,
         rel_tol=1.0e-13,
     )
-    expected_single_area = math.pi * dimensional_uncorrected.throat_width**2 / 4.0
-    assert stator.throat_height is None
-    assert math.isclose(stator.dimensional_single_nozzle_throat_area, expected_single_area, rel_tol=1.0e-14)
-    assert math.isclose(stator.dimensional_total_throat_area,
-                        stator.nozzle_count * expected_single_area, rel_tol=1.0e-14)
+    assert math.isclose(dimensional_uncorrected.throat_width, stator.reference_length, rel_tol=1.0e-14)
     assert math.isclose(stator.dimensional_chord,
                         nondimensional_uncorrected.chord * stator.dimensional_scale_factor, rel_tol=1.0e-14)
     assert math.isclose(
@@ -258,7 +265,6 @@ def test_conical_contour_reuses_bl_mixing_and_plotting_pipeline():
 
 def test_conical_contour_supports_laminar_transition_mode():
     stator = make_stator(
-        throat_height=None,
         contour_method="conical",
         half_cone_metal_angle=15.0,
         boundary_layer_mode="laminar_then_turbulent",
@@ -272,15 +278,11 @@ def test_conical_contour_supports_laminar_transition_mode():
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
-        ({"throat_height": None}, "requires a positive finite throat_height"),
-        (
-            {"contour_method": "conical", "throat_height": None},
-            "requires half_cone_metal_angle",
-        ),
+        ({"contour_method": "conical"}, "requires half_cone_metal_angle"),
         ({"half_cone_metal_angle": 15.0}, "only valid"),
         (
-            {"contour_method": "conical", "half_cone_metal_angle": 15.0},
-            "throat_height is only valid",
+            {"contour_method": "conical", "half_cone_metal_angle": 90.0},
+            "half_cone_metal_angle must be between",
         ),
     ],
 )
@@ -335,17 +337,19 @@ def test_stator_subsonic_mixing_solution_overrides_automatic_selection():
 
 
 def test_trailing_edge_thickness_uses_nasa_tm_x_2343_afmix_blockage():
-    sharp = make_stator(trailing_edge_thickness_over_total_pitch=0.0)
-    finite = make_stator(trailing_edge_thickness_over_total_pitch=0.05)
+    sharp = make_stator(trailing_edge_thickness=0.0)
+    finite = make_stator(trailing_edge_thickness=0.002)
     uncorrected = finite.nondimensional_shapes.uncorrected
     corrected = finite.nondimensional_shapes.corrected
 
-    # The input ratio divides total pitch into the unchanged ideal open passage and trailing-edge metal. The fixed
-    # dimensional total pitch therefore changes the dimensional scale when the metal fraction changes.
+    # Dimensional trailing-edge metal is added to the open passage after scaling. It changes the total pitch and
+    # mixed-out state without changing either the ideal contour scale or the boundary-layer march.
     assert np.array_equal(uncorrected.pressure_surface.x,
                           sharp.nondimensional_shapes.uncorrected.pressure_surface.x)
     assert uncorrected.total_pitch > sharp.nondimensional_shapes.uncorrected.total_pitch
-    assert finite.dimensional_scale_factor < sharp.dimensional_scale_factor
+    assert finite.dimensional_scale_factor == sharp.dimensional_scale_factor
+    assert np.array_equal(finite.suction_boundary_layer.displacement_thickness_over_chord,
+                          sharp.suction_boundary_layer.displacement_thickness_over_chord)
     assert finite.real_outlet_absolute_flow_mach != sharp.real_outlet_absolute_flow_mach
     assert finite.real_outlet_absolute_flow_angle != sharp.real_outlet_absolute_flow_angle
 
@@ -405,16 +409,22 @@ def test_trailing_edge_thickness_uses_nasa_tm_x_2343_afmix_blockage():
 
 def test_boundary_layer_correction_warns_when_it_consumes_all_trailing_edge_metal():
     with pytest.warns(RuntimeWarning, match="consumed the complete stator trailing-edge thickness"):
-        stator = make_stator(trailing_edge_thickness_over_total_pitch=1.0e-3)
+        stator = make_stator(trailing_edge_thickness=1.0e-5)
 
     assert stator.nondimensional_shapes.corrected.trailing_edge_thickness == 0.0
     assert stator.mixing_results["subsonic"]["trailing_edge_blockage_ratio"] == 0.0
 
 
-@pytest.mark.parametrize("thickness_ratio", [-1.0e-6, 1.0])
-def test_trailing_edge_thickness_ratio_must_be_in_half_open_unit_interval(thickness_ratio):
+@pytest.mark.parametrize("trailing_edge_thickness", [-1.0e-6, math.inf, math.nan])
+def test_trailing_edge_thickness_must_be_nonnegative_and_finite(trailing_edge_thickness):
     with pytest.raises(ValueError, match="trailing_edge_thickness"):
-        make_stator(trailing_edge_thickness_over_total_pitch=thickness_ratio)
+        make_stator(trailing_edge_thickness=trailing_edge_thickness)
+
+
+@pytest.mark.parametrize("reference_length", [0.0, -0.01, math.inf, math.nan])
+def test_reference_length_must_be_positive_and_finite(reference_length):
+    with pytest.raises(ValueError, match="reference_length"):
+        make_stator(reference_length=reference_length)
 
 
 def test_supersonic_mixing_solution_override_is_rejected():
@@ -440,6 +450,11 @@ def test_coupled_iteration_matches_real_outlet_absolute_flow_mach_and_angle():
         stator.ideal_outlet_absolute_flow_mach * math.cos(math.radians(stator.outlet_metal_angle)),
         rel_tol=1.0e-12,
     )
+    for evaluation in stator._evaluation_cache.values():
+        assert math.isclose(evaluation.ideal.nozzle_passage_pitch * evaluation.dimensional_scale_factor,
+                            stator.reference_length, rel_tol=1.0e-12)
+        assert math.isclose(evaluation.ideal.trailing_edge_thickness * evaluation.dimensional_scale_factor,
+                            stator.trailing_edge_thickness, rel_tol=1.0e-12)
 
 
 def test_coupled_stator_flag_requires_outlet_metal_angle_iteration():
@@ -462,7 +477,6 @@ def test_coupled_stator_iteration_supports_supersonic_solution():
 
 def test_coupled_conical_iteration_varies_ideal_absolute_flow_mach():
     stator = make_stator(
-        throat_height=None,
         contour_method="conical",
         half_cone_metal_angle=15.0,
         iterate_outlet_metal_angle=True,
@@ -481,13 +495,18 @@ def test_coupled_conical_iteration_varies_ideal_absolute_flow_mach():
         expected_area_ratio,
         rel_tol=1.0e-13,
     )
+    for evaluation in stator._evaluation_cache.values():
+        assert math.isclose(evaluation.ideal.throat_width * evaluation.dimensional_scale_factor,
+                            stator.reference_length, rel_tol=1.0e-12)
+        assert math.isclose(evaluation.ideal.trailing_edge_thickness * evaluation.dimensional_scale_factor,
+                            stator.trailing_edge_thickness, rel_tol=1.0e-12)
 
 
 @pytest.mark.parametrize(
     "overrides",
     [
         {},
-        {"contour_method": "conical", "throat_height": None, "half_cone_metal_angle": 15.0},
+        {"contour_method": "conical", "half_cone_metal_angle": 15.0},
     ],
 )
 def test_plot_uses_total_pitch_and_closes_trailing_edge(overrides):

@@ -1,7 +1,7 @@
 """Executable example for :class:`SupersonicStatorNozzle`.
 
-The object is given the operating point, mean radius, admission and discrete passage arrangement. It uses total pitch
-to dimensionalize the selected supersonic contour, then calculates throat area and mass flow. Nothing in this example
+The object is given the operating point, reference length and dimensional trailing-edge thickness. The reference
+length dimensionalizes the selected supersonic contour before metal thickness is added to its exit width. Nothing here
 is an old FORTRAN print-control, unit-system, Prandtl--Meyer-angle or gas-property input; those quantities are derived
 internally.
 """
@@ -18,18 +18,15 @@ working_fluid = Fluid(coolprop_names=["Nitrogen", "Oxygen"], mass_fractions=[0.7
 # ---------------------------------------------------------------------------
 moc_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77,
     requested_outlet_absolute_flow_angle=70.0,  # requested absolute outlet flow angle
-    nozzle_count=30,
-    mean_radius=0.20,  # [m]
-    throat_height=0.05,  # out-of-plane blade span at the throat [m]
+    reference_length=0.04,  # uncorrected open circumferential exit width, excluding trailing-edge metal [m]
     fluid=working_fluid,
     upstream_total_temperature=900.0,  # [K]
     upstream_total_pressure=1.0e6,  # [Pa]
-    partial_admission_fraction=1.0,  # fraction of the turbine perimeter occupied by nozzles; default: 1.0
-    # Uncorrected trailing-edge metal fraction. BL correction reduces the remaining thickness used by AFMIX.
-    trailing_edge_thickness_over_total_pitch=0.05,  # default: 0.0
+    # Uncorrected trailing-edge metal thickness. BL correction reduces the remaining thickness used by AFMIX.
+    trailing_edge_thickness=0.002,  # [m]; default: 0.0
     # Choose exactly one contour method. For a conical nozzle, use
-    # contour_method="conical", omit throat_height, and provide
-    # half_cone_metal_angle (for example 15).
+    # contour_method="conical", use throat diameter as reference_length,
+    # and provide half_cone_metal_angle (for example 15).
     contour_method="moc",  # default: "moc"
     number_of_nodes=101,  # default: 101; nodes on each nozzle segment and BL mesh
     # False is the zero-deviation assumption. Set True to vary the outlet metal
@@ -49,8 +46,7 @@ moc_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77,
 
 print("\nMOC stator nozzle")
 print(f"Throat-static gamma: {moc_stator.gamma:.5f}")
-print(f"Calculated mass flow: {moc_stator.mass_flow_rate:.6e} kg/s")
-print(f"Total throat area: {moc_stator.dimensional_total_throat_area:.6e} m^2")
+print(f"Total nozzle pitch: {moc_stator.dimensional_total_pitch:.6e} m")
 print(f"One-passage throat width: {moc_stator.dimensional_shapes.uncorrected.throat_width:.6e} m")
 print(f"Contour method: {moc_stator.contour_method}")
 print(f"Ideal exit area ratio: {moc_stator.nondimensional_ideal_exit_area_ratio:.5f}")
@@ -76,16 +72,14 @@ moc_stator.plot(dimensional=True,  # default: False; dimensional plot axes are i
 # ---------------------------------------------------------------------------
 # This case uses the same operating point and fluid so that its circular
 # throat and contour can be compared directly with the rectangular MOC case.
-# throat_height is intentionally absent because it is not part of the conical input set.
+# The reference length is now its throat diameter rather than the open circumferential exit width.
 conical_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77,
     requested_outlet_absolute_flow_angle=70.0,  # requested absolute outlet flow angle
-    nozzle_count=30,
-    mean_radius=0.20,  # [m]
+    reference_length=0.01,  # uncorrected throat diameter [m]
     fluid=working_fluid,
     upstream_total_temperature=900.0,  # [K]
     upstream_total_pressure=1.0e6,  # [Pa]
-    partial_admission_fraction=1.0,
-    trailing_edge_thickness_over_total_pitch=0.05,
+    trailing_edge_thickness=0.002,  # [m]
     contour_method="conical",
     half_cone_metal_angle=15.0,  # required conical divergent half-angle
     number_of_nodes=101,  # nodes on each divergent/straight segment and BL mesh
@@ -98,9 +92,7 @@ conical_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77
 
 print("\nConical de Laval stator nozzle")
 print(f"Throat-static gamma: {conical_stator.gamma:.5f}")
-print(f"Calculated mass flow: {conical_stator.mass_flow_rate:.6e} kg/s")
-print(f"Total throat area: {conical_stator.dimensional_total_throat_area:.6e} m^2")
-print(f"One-nozzle throat area: {conical_stator.dimensional_single_nozzle_throat_area:.6e} m^2")
+print(f"Total nozzle pitch: {conical_stator.dimensional_total_pitch:.6e} m")
 print(f"One-nozzle throat diameter: {conical_stator.dimensional_shapes.uncorrected.throat_width:.6e} m")
 print(f"Contour method: {conical_stator.contour_method}")
 print(f"Ideal exit area ratio: {conical_stator.nondimensional_ideal_exit_area_ratio:.5f}")
