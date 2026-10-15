@@ -316,8 +316,8 @@ def design_conical_stator_nozzle(*, ideal_outlet_absolute_flow_mach: float, outl
     # A conical wall makes dM/dx singular at the exact sonic throat under the
     # quasi-one-dimensional area--Mach relation. A fixed fourth-root spacing
     # retains both endpoints while avoiding an artificial cluster of stations
-    # in that singular neighborhood. The distribution is unchanged between
-    # iterative trials, so only the physical coordinates move.
+    # in that singular neighborhood. Keep this distribution for the ideal
+    # geometry independently of the disabled conical boundary-layer calculation.
     divergent_fraction = np.linspace(0.0, 1.0, number_of_nodes, dtype=float) ** 0.25
     pressure_x = divergent_length * divergent_fraction
     pressure_radius = 0.5 + (exit_radius_over_throat_diameter - 0.5) * divergent_fraction

@@ -37,7 +37,9 @@ perfect-gas area-Mach relation rather than from the two-dimensional MOC construc
 
 All three design routes assume an isentropic, calorically perfect gas for the inviscid geometry. The ratio of specific
 heats is evaluated from the selected mixture at a representative static state and then frozen for the gas-dynamic
-construction. CoolProp transport properties may still vary along the surfaces during the boundary-layer calculation.
+construction. CoolProp transport properties may still vary along the rotor and MOC stator surfaces during the
+boundary-layer calculation. The conical de Laval route is inviscid: boundary-layer calculation, shape correction and
+aftermixing are disabled.
 
 ### Public classes
 
@@ -63,7 +65,7 @@ The package also exposes result containers useful in engineering scripts:
 | `FluidState` | Thermodynamic and transport properties at one temperature and pressure.                    |
 | `SurfaceCoordinates` | Coordinates, framed flow-Mach array and surface `metal_angle`.                              |
 | `BladeShape`, `NozzleShape` | `pressure_surface`, `suction_surface` and nondimensional passage dimensions. |
-| `BladeShapes`, `NozzleShapes` | Paired uncorrected and BL-corrected geometries in one coordinate scale. |
+| `BladeShapes`, `NozzleShapes` | Ideal and BL-corrected geometries; the conical nozzle's `corrected` shape is `None`. |
 | `DimensionalBladeShapes`, `DimensionalNozzleShapes` | Geometry in metres. |
 | `BoundaryLayerResult` | Boundary-layer thicknesses, freestream flow Mach and transition or separation data.        |
 | `FlowStateTable` | Printable summary of the principal rotor-relative flow states. |
@@ -519,9 +521,10 @@ thickness in metres. The class constructs one of two contours:
 - `contour_method="moc"` creates a two-dimensional, sharp-throat slot nozzle that delivers uniform parallel flow
   at its ideal exit;
 - `contour_method="conical"` creates a conical de Laval nozzle whose circular exit area produces
-  the requested ideal exit Mach.
+  the requested ideal exit Mach. It calculates only ideal geometry, throat thermodynamics and dimensional scaling;
+  boundary-layer calculations, shape correction and aftermixing are disabled.
 
-For MOC, `reference_length` is the uncorrected rectangular nozzle's open circumferential exit width, excluding
+For MOC, `reference_length` is the uncorrected rectangular nozzle's circumferential nozzle width, excluding
 trailing-edge metal. For the conical nozzle, it is the uncorrected throat diameter. That diameter is represented by
 the common `NozzleShape.throat_width` property.
 
@@ -544,7 +547,7 @@ working_fluid = Fluid(["Nitrogen", "Oxygen"], [0.767, 0.233])
 moc_stator = SupersonicStatorNozzle(
     requested_outlet_absolute_flow_mach=1.77,          # ideal absolute outlet flow Mach in this example
     requested_outlet_absolute_flow_angle=70.0,         # ideal absolute outlet flow angle in this example
-    reference_length=0.04,            # uncorrected open circumferential exit width, excluding metal, m
+    reference_length=0.04,            # uncorrected circumferential nozzle width, excluding metal, m
     fluid=working_fluid,
     upstream_total_temperature=900.0,  # K
     upstream_total_pressure=1.0e6,     # Pa
@@ -601,17 +604,25 @@ ideal_conical_m = conical_stator.dimensional_shapes.uncorrected
 `half_cone_metal_angle` is the divergent-wall half angle from the nozzle axis and must lie between 0 and 90 degrees.
 `half_cone_metal_angle` must be omitted for a MOC nozzle.
 
-For both routes, the uncorrected dimensional total pitch is the open circumferential exit width plus
-`trailing_edge_thickness`. Changing metal thickness does not change the contour scale. For MOC, this open width is
+The conical route has no corrected shape or real aftermixed outlet state. `nondimensional_shapes.corrected`,
+`dimensional_shapes.corrected`, `pressure_boundary_layer`, `suction_boundary_layer`, `mixing_results`,
+`mixing_solution`, `real_outlet_absolute_flow_mach`, `real_outlet_absolute_flow_angle`,
+`supersonic_mixing_available`, `nondimensional_corrected_exit_area_ratio`, and both
+`dimensional_corrected_exit_*_thickness` properties are `None`. Its plot displays only the ideal contour.
+Omit `boundary_layer_mode`, initial turbulent thicknesses and `mixing_solution`, and leave both mixed-flow iteration
+flags false; explicitly requesting these MOC-only calculations for a conical nozzle raises `ValueError`.
+
+For both routes, the uncorrected dimensional total pitch is the circumferential nozzle width plus
+`trailing_edge_thickness`. Changing metal thickness does not change the contour scale. For MOC, this nozzle width is
 `reference_length`; `NozzleShape.nozzle_exit_width` is instead measured normal to the nozzle axis at the end of the
 divergent contour. Remaining BL and iterative inputs are documented later. Important base-design properties are:
 
 | Property | Engineering interpretation                                           |
 |---|----------------------------------------------------------------------|
 | `gamma`, `throat_static_temperature`, `throat_static_pressure` | Fluid state at the throat. |
-| `reference_length` | Uncorrected MOC open circumferential exit width or conical throat diameter, m. |
+| `reference_length` | Uncorrected MOC circumferential nozzle width or conical throat diameter, m. |
 | `trailing_edge_thickness` | Specified uncorrected circumferential metal thickness, m. |
-| `dimensional_total_pitch` | Uncorrected open circumferential exit width plus trailing-edge metal, m. |
+| `dimensional_total_pitch` | Uncorrected circumferential nozzle width plus trailing-edge metal, m. |
 | `dimensional_scale_factor` | Metres per nondimensional nozzle-coordinate unit. |
 | `outlet_metal_angle` | Outlet metal angle in the stationary machine frame.                   |
 | `ideal_outlet_absolute_flow_angle` | Uniform premixing absolute flow angle.                              |
@@ -620,14 +631,14 @@ divergent contour. Remaining BL and iterative inputs are documented later. Impor
 | `dimensional_shapes.uncorrected` | Ideal `NozzleShape` in metres. |
 | `NozzleShape.throat_width` | MOC passage width or conical diameter in the active coordinate scale. |
 | `NozzleShape.nozzle_exit_width` | Width or diameter at the divergent-contour exit. |
-| `NozzleShape.nozzle_passage_pitch`, `NozzleShape.total_pitch` | Open passage pitch and pitch including metal. |
+| `NozzleShape.nozzle_passage_pitch`, `NozzleShape.total_pitch` | Circumferential nozzle width and total pitch including metal. |
 | `NozzleShape.trailing_edge_thickness` | Metal thickness remaining in that geometry. |
 | `number_of_nodes` | Nodes on each MOC, conical or straight-wall segment. |
 | `contour_point_count`, `pressure_number_of_nodes` | Divergent-contour node counts. |
 | `actual_flow_turning_increment` | Derived MOC characteristic turning increment; `None` for conical nozzles. |
 | `nondimensional_ideal_exit_area_ratio` | Isentropic ratio required by the final ideal exit Mach. |
 | `nondimensional_uncorrected_exit_area_ratio` | Area ratio measured from the ideal contour. |
-| `nondimensional_corrected_exit_area_ratio` | Area ratio measured from the BL-corrected contour. |
+| `nondimensional_corrected_exit_area_ratio` | Area ratio measured from the MOC BL-corrected contour; `None` for conical. |
 | `dimensional_conical_divergent_length` | Conical divergent length in metres; `None` for an MOC nozzle. |
 | `dimensional_chord`, `chord_reynolds_number` | Dimensional length and sonic-throat Reynolds scale. |
 
@@ -642,10 +653,10 @@ $$T^{\ast}=T_t\frac{2}{\gamma+1}, \qquad
 p^{\ast}=p_t\left(\frac{2}{\gamma+1}\right)^{\gamma/(\gamma-1)}$$
 
 until `fluid.properties(T*, p*)` returns a consistent $\gamma$. That value is then frozen for the contour and
-aftermixing equations.
+MOC aftermixing equations.
 
-Let $L_{\mathrm{ref}}$ be `reference_length`, $S^{\ast}_{N,u}$ the uncorrected nondimensional open circumferential
-exit width and $w^{\ast}_{t,u}$ the uncorrected nondimensional throat width. The dimensional coordinate scale is
+Let $L_{\mathrm{ref}}$ be `reference_length`, $S^{\ast}_{N,u}$ the uncorrected nondimensional circumferential
+nozzle width and $w^{\ast}_{t,u}$ the uncorrected nondimensional throat width. The dimensional coordinate scale is
 
 $$k_s=\begin{cases}
 L_{\mathrm{ref}}/S^{\ast}_{N,u}, & \text{MOC}, \\
@@ -653,7 +664,7 @@ L_{\mathrm{ref}}/w^{\ast}_{t,u}, & \text{conical}.
 \end{cases}$$
 
 The conical coordinates are normalized by throat diameter, so $w^{\ast}_{t,u}=1$ and $k_s=L_{\mathrm{ref}}$.
-Every length in both the uncorrected and corrected contours is multiplied by the same $k_s$.
+Every ideal contour length is multiplied by $k_s$. The MOC corrected contour uses that same scale.
 
 The specified dimensional trailing-edge thickness $t_{\mathrm{TE},u}$ is added to the dimensional exit width:
 
@@ -703,7 +714,7 @@ by the final ideal exit Mach is stored separately from this geometric ratio.
 
 After the shaped divergent contour, the suction wall continues as a straight line in the nozzle-axis system. If
 $(x_e,y_e)$ is the end of the nondimensional upper contour and $\alpha_N$ is `outlet_metal_angle`, measured from the
-machine axis, the added straight length and open nozzle pitch are
+machine axis, the added straight length and circumferential nozzle width are
 
 $$L_s=2y_e\tan\alpha_N, \qquad S_N=\frac{2y_e}{\cos\alpha_N}.$$
 
@@ -729,9 +740,9 @@ $$\frac{L_d}{w_t}=\frac{\sqrt{A_e/A_t}-1}{2\tan\theta_c}.$$
 
 The suction wall has the same straight downstream line as used by the MOC contour. `number_of_nodes` sets the nodes on
 both the conical divergent segment and this straight segment, including their shared junction. At every divergent node,
-the local circular area ratio is inverted on the supersonic branch to obtain the freestream Mach used by the
-boundary-layer (BL) march. Axial nodes distribution avoids clustering nodes near the throat, where numerical issues with
-BL marching scheme may occur. BL calculations is explained later in the documentation. 
+the local circular area ratio is inverted on the supersonic branch to obtain the stored ideal Mach number.
+The existing axial node distribution avoids clustering stations near the sonic throat. Boundary-layer calculations,
+shape correction and aftermixing are not performed for this contour.
 
 #### Code implementation of `SupersonicStatorNozzle`
 
@@ -740,7 +751,7 @@ The base stator design follows this sequence:
 1. `stator_nozzle.py` validates the contour-specific inputs and gets throat flow state.
 2. For `"moc"`, `stator_geometry.py` builds the fixed-node characteristic net and retains the final wall contour. For
    `"conical"`, it evaluates the area ratio, exit radius and fixed-node straight walls.
-3. `reference_length` establishes the dimensional coordinate scale; the open exit pitch plus dimensional metal
+3. `reference_length` establishes the dimensional coordinate scale; the circumferential nozzle width plus dimensional metal
    thickness determines the total pitch.
 4. `stator_results.py` stores the nested nondimensional and dimensional nozzle shapes.
 
@@ -756,7 +767,8 @@ The files in `stator/` have the following roles:
 axisymmetric alternative. Both return an `IdealNozzleConstruction`, which contains a `NozzleShape`.
 `NozzleShape.pressure_surface` and `NozzleShape.suction_surface` contain the two walls.
 `NozzleShape.scaled(...)` returns a geometry-only scaled copy. `SupersonicStatorNozzle.dimensionalize()` applies the
-reference-length factor and stores both copies under `dimensional_shapes`. Each stator `SurfaceCoordinates` object
+reference-length factor and stores the ideal geometry plus the optional MOC corrected geometry under
+`dimensional_shapes`. Each stator `SurfaceCoordinates` object
 stores `absolute_flow_mach`, while `relative_flow_mach` is `None`. The `metal_angle` array is in degrees.
 
 Additional nozzle design features of `stator_nozzle.py` are documented below.
@@ -765,7 +777,7 @@ Additional nozzle design features of `stator_nozzle.py` are documented below.
 
 #### Common theory and implementation
 
-The rotor and stator use the same compressible integral boundary-layer solver in
+The rotor and planar MOC stator use the same compressible integral boundary-layer solver in
 `boundary_layer/boundary_layer_solver.py`. It follows the methods used by NASA TM X-2434 and NASA TM X-2343:
 
 - the Cohen-Reshotko method from [NACA Report 1294](https://ntrs.nasa.gov/search.jsp?R=19930091005) for laminar flow;
@@ -794,7 +806,8 @@ the two coupled Sasman-Cresci integral equations for transformed momentum thickn
 adaptive RK45 Runge-Kutta scheme. At natural transition, or at laminar separation, the code follows the legacy
 `CTHET=1` choice: momentum thickness is conserved and the turbulent march starts immediately.
 
-Two inlet modes are available in both public classes:
+Two inlet modes are available for the rotor and MOC stator. Omission of `boundary_layer_mode` selects natural
+transition for these designs; the conical stator instead sets it to `None` and skips BL calculations:
 
 | `boundary_layer_mode` | Required initialization |
 |---|---|
@@ -827,7 +840,8 @@ growth.
 
 #### Stator boundary-layer correction
 
-The stator march starts at the sonic sharp throat. In natural-transition mode the throat thickness is therefore zero;
+This section applies only to `contour_method="moc"`. The stator march starts at the sonic sharp throat.
+In natural-transition mode the throat thickness is therefore zero;
 in fully turbulent mode the two specified thicknesses are throat values.
 
 For the symmetric unrotated nozzle, the class performs one march along the upper wall. The pressure-side result is the
@@ -848,18 +862,18 @@ y_{\mathrm{suction,corr}}=y_{\mathrm{suction}}+\delta^{\ast}.$$
 
 It is a vertical offset in nozzle-axis coordinates. The suction-side straight wall segment is
 then extended twice: first by displacement thickness at the end of the symmetrical section,
-and second to account for continued thickness growth along the newly created segment. The corrected open nozzle pitch
+and second to account for continued thickness growth along the newly created segment. The corrected circumferential nozzle width
 and the exit BL thicknesses are retained for the final mixed-out calculation.
 
-Both contours use the scale established by the uncorrected reference length. The corrected widths are therefore
+Both MOC shapes use the scale established by the uncorrected reference length. The corrected widths are therefore
 allowed to increase with displacement thickness rather than being rescaled to the input `reference_length`.
-Within each geometry trial, the correction increases the open nozzle width while total pitch remains fixed.
+Within each geometry trial, the correction increases the nozzle width while total pitch remains fixed.
 The remaining corrected trailing-edge metal is therefore
 
 $$t^{\ast}_{\mathrm{TE},c}=\max\left[0,
 S^{\ast}_{\mathrm{total}}-S^{\ast}_{N,c}\right].$$
 
-Equivalently, the BL-induced open-pitch increase is subtracted from the uncorrected trailing-edge thickness. If the
+Equivalently, the BL-induced nozzle-width increase is subtracted from the uncorrected trailing-edge thickness. If the
 increase consumes all specified metal, the thickness is limited to zero and the class issues a `RuntimeWarning`. The
 corrected pitch and corrected remaining thickness are the only geometry inputs used by final stator aftermixing.
 
@@ -876,9 +890,6 @@ Stator controls and outputs are:
 | `dimensional_shapes.corrected` | The same displacement-corrected geometry in metres. |
 | `dimensional_corrected_exit_displacement_thickness` | Final extrapolated suction-side $\delta^{\ast}$, m. |
 | `dimensional_corrected_exit_momentum_thickness` | Final extrapolated suction-side $\theta$, m. |
-
-For the conical contour, local Mach at every divergent-wall node is found by inverting the circular area-Mach relation.
-The same integral correction is then applied to its stored meridional walls.
 
 `stator.plot(dimensional=True, show_two_nozzles=True)` rotates both the ideal and corrected shapes by
 `outlet_metal_angle` and displays coordinates in millimetres. By default, an adjacent passage is shifted upward by
@@ -1000,6 +1011,7 @@ solution. They include `real_outlet_relative_flow_mach`, `real_outlet_relative_a
 
 #### Stator aftermixing
 
+Stator aftermixing applies only to `contour_method="moc"`; it is disabled for conical de Laval nozzles.
 The stator is stationary, so nozzle flow is already in the absolute frame. The input `trailing_edge_thickness`
 specifies the uncorrected circumferential metal thickness in metres. Boundary-layer correction widens the
 nozzle exit width and reduces the remaining metal as described above. Final `mixing_results` uses only the corrected pitch,
@@ -1092,7 +1104,7 @@ generally differ. Construction therefore emits a warning. Passage-pitch closure 
 
 #### Stator iterative schemes
 
-The stator provides two mixed-out closure levels.
+The MOC stator provides two mixed-out closure levels. These are disabled for conical de Laval nozzles.
 
 ##### Mixed-flow angle matching
 
@@ -1126,8 +1138,8 @@ derivative-based nonlinear least-squares method varies `outlet_metal_angle` and
 $$M_{\mathrm{mixed}}-M_{\mathrm{requested}}=0, \qquad
 \alpha_{\mathrm{mixed}}-\alpha_{\mathrm{requested}}=0.$$
 
-For every MOC trial, the nozzle contour is rebuilt for the new ideal (premixed flow) exit Mach. For every conical
-trial, the fixed-node wall, area ratio, exit radius and divergent length are rebuilt. The converged premixing value is
+These matching schemes are available only for MOC nozzles; both iteration flags must remain false for conical nozzles.
+For every MOC trial, the nozzle contour is rebuilt for the new ideal (premixed flow) exit Mach. The converged premixing value is
 stored as `ideal_outlet_absolute_flow_mach`, while `requested_outlet_absolute_flow_mach` retains the target. The
 corresponding aftermixed value is `real_outlet_absolute_flow_mach`.
 `match_real_outlet_absolute_flow_mach=True` requires

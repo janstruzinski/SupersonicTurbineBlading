@@ -6,7 +6,7 @@ import pytest
 
 matplotlib.use("Agg")
 
-from SupersonicTurbineBlading import Fluid, StatorDesignConvergenceError, SupersonicStatorNozzle
+from SupersonicTurbineBlading import Fluid, SupersonicStatorNozzle
 from SupersonicTurbineBlading.gas_dynamics import isentropic_area_ratio, supersonic_mach_from_area_ratio
 from SupersonicTurbineBlading.stator import stator_nozzle as stator_nozzle_module
 from SupersonicTurbineBlading.stator.stator_geometry import design_conical_stator_nozzle, design_ideal_stator_nozzle
@@ -27,6 +27,10 @@ def make_stator(**overrides):
         initial_turbulent_displacement_thickness=2.0e-5,
         initial_turbulent_momentum_thickness=5.0e-6,
     )
+    if overrides.get("contour_method") == "conical":
+        inputs.update(boundary_layer_mode=None,
+                      initial_turbulent_displacement_thickness=None,
+                      initial_turbulent_momentum_thickness=None)
     inputs.update(overrides)
     return SupersonicStatorNozzle(**inputs)
 
@@ -139,8 +143,11 @@ def test_reference_length_sets_geometry_scale_and_metal_is_added_to_open_pitch(c
     assert math.isclose(stator.dimensional_scale_factor,
                         expected_total_pitch / nondimensional.total_pitch, rel_tol=1.0e-12)
     assert math.isclose(stator.dimensional_shapes.reference_length, stator.reference_length, rel_tol=1.0e-12)
-    assert np.allclose(stator.dimensional_shapes.corrected.suction_surface.x,
-                       stator.nondimensional_shapes.corrected.suction_surface.x * stator.dimensional_scale_factor)
+    if contour_method == "moc":
+        assert np.allclose(stator.dimensional_shapes.corrected.suction_surface.x,
+                           stator.nondimensional_shapes.corrected.suction_surface.x * stator.dimensional_scale_factor)
+    else:
+        assert stator.dimensional_shapes.corrected is None
 
 
 @pytest.mark.parametrize("contour_method", ["moc", "conical"])
@@ -160,8 +167,6 @@ def test_reference_length_scales_ideal_contour_independently_of_trailing_edge_me
 @pytest.mark.parametrize("options, chord, reynolds_number, real_flow_angle, real_flow_mach", [
     ({"reference_length": 0.03979350694547071}, 0.05432331459426887, 1997057.033343444,
      70.91712074713297, 1.7303884409586916),
-    ({"contour_method": "conical", "half_cone_metal_angle": 15.0, "reference_length": 0.011407974664919045},
-     0.041503037702172785, 1525752.5054810734, 71.07286177917304, 1.735093944092742),
 ])
 def test_equivalent_dimensions_preserve_existing_bl_and_aftermixing_results(
         options, chord, reynolds_number, real_flow_angle, real_flow_mach):
@@ -218,14 +223,20 @@ def test_stores_corrected_uncorrected_and_dimensional_shapes():
     assert not hasattr(stator, "boundary_layer_suction_station_count")
 
 
-def test_conical_contour_reuses_bl_mixing_and_plotting_pipeline():
+def test_conical_contour_is_inviscid_and_skips_bl_correction_and_mixing(monkeypatch):
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("an inviscid conical nozzle must not call BL, shape correction, or aftermixing")
+
+    monkeypatch.setattr(stator_nozzle_module, "solve_boundary_layer", unexpected_call)
+    monkeypatch.setattr(SupersonicStatorNozzle, "_correct_shape", unexpected_call)
+    monkeypatch.setattr(SupersonicStatorNozzle, "_aftermixing", unexpected_call)
+    monkeypatch.setattr(SupersonicStatorNozzle, "_select_mixing_result", unexpected_call)
     stator = make_stator(
         contour_method="conical",
         half_cone_metal_angle=15.0,
     )
     expected_area_ratio = float(isentropic_area_ratio(stator.ideal_outlet_absolute_flow_mach, stator.gamma))
     nondimensional_uncorrected = stator.nondimensional_shapes.uncorrected
-    nondimensional_corrected = stator.nondimensional_shapes.corrected
     dimensional_uncorrected = stator.dimensional_shapes.uncorrected
 
     assert stator.contour_method == "conical"
@@ -244,34 +255,49 @@ def test_conical_contour_reuses_bl_mixing_and_plotting_pipeline():
         stator.nondimensional_conical_divergent_length * stator.dimensional_scale_factor,
         rel_tol=1.0e-14,
     )
-    expected_te_blockage = nondimensional_corrected.trailing_edge_thickness / \
-        nondimensional_corrected.nozzle_passage_pitch
-    assert math.isclose(
-        stator.mixing_results["subsonic"]["trailing_edge_blockage_ratio"], expected_te_blockage, rel_tol=1.0e-13
-    )
     assert len(nondimensional_uncorrected.pressure_surface.x) == stator.number_of_nodes
     assert len(nondimensional_uncorrected.suction_surface.x) == 2 * stator.number_of_nodes - 1
-    assert len(nondimensional_corrected.suction_surface.x) == 2 * stator.number_of_nodes + 1
-    assert math.isclose(
-        stator.suction_boundary_layer.freestream_absolute_flow_mach[-1],
-        stator.ideal_outlet_absolute_flow_mach,
-        rel_tol=1.0e-11,
-    )
-    assert math.isfinite(stator.real_outlet_absolute_flow_mach)
+    assert math.isclose(nondimensional_uncorrected.pressure_surface.absolute_flow_mach[-1],
+                        stator.ideal_outlet_absolute_flow_mach, rel_tol=1.0e-11)
+    assert stator.outlet_metal_angle == stator.requested_outlet_absolute_flow_angle
+    assert stator.ideal_outlet_absolute_flow_mach == stator.requested_outlet_absolute_flow_mach
+    for name in ("boundary_layer_mode", "pressure_boundary_layer", "suction_boundary_layer", "mixing_results",
+                 "mixing_solution", "real_outlet_absolute_flow_angle", "real_outlet_absolute_flow_mach",
+                 "supersonic_mixing_available", "nondimensional_corrected_exit_area_ratio",
+                 "dimensional_corrected_exit_displacement_thickness", "dimensional_corrected_exit_momentum_thickness"):
+        assert getattr(stator, name) is None
+    assert stator.nondimensional_shapes.corrected is None
+    assert stator.dimensional_shapes.corrected is None
+    assert stator.dimensionalize().corrected is None
     figure, axes = stator.plot(dimensional=True, show=False)
     assert figure is axes.figure
-    assert len(axes.lines) == 10
+    assert len(axes.lines) == 5
+    assert axes.get_legend_handles_labels()[1] == ["ideal"]
 
 
-def test_conical_contour_supports_laminar_transition_mode():
-    stator = make_stator(
-        contour_method="conical",
-        half_cone_metal_angle=15.0,
-        boundary_layer_mode="laminar_then_turbulent",
-        initial_turbulent_displacement_thickness=None,
-        initial_turbulent_momentum_thickness=None,
-    )
-    assert stator.suction_boundary_layer.regime[0] == "laminar"
+@pytest.mark.parametrize("options, message", [
+    ({"boundary_layer_mode": "laminar_then_turbulent"}, "boundary_layer_mode"),
+    ({"boundary_layer_mode": "fully_turbulent"}, "boundary_layer_mode"),
+    ({"initial_turbulent_displacement_thickness": 2.0e-5}, "initial_turbulent_displacement_thickness"),
+    ({"initial_turbulent_momentum_thickness": 5.0e-6}, "initial_turbulent_momentum_thickness"),
+    ({"mixing_solution": "subsonic"}, "mixing_solution"),
+    ({"iterate_outlet_metal_angle": True}, "iterate_outlet_metal_angle"),
+    ({"iterate_outlet_metal_angle": True, "match_real_outlet_absolute_flow_mach": True}, "iterate_outlet_metal_angle"),
+])
+def test_conical_contour_rejects_viscous_and_mixed_flow_controls(options, message):
+    with pytest.raises(ValueError, match=message):
+        make_stator(contour_method="conical", half_cone_metal_angle=15.0, **options)
+
+
+def test_moc_default_still_calculates_boundary_layer_correction_and_mixing():
+    stator = make_stator(boundary_layer_mode=None,
+                         initial_turbulent_displacement_thickness=None,
+                         initial_turbulent_momentum_thickness=None)
+    assert stator.boundary_layer_mode == "laminar_then_turbulent"
+    assert stator.pressure_boundary_layer is not None
+    assert stator.suction_boundary_layer is not None
+    assert stator.nondimensional_shapes.corrected is not None
+    assert stator.mixing_results is not None
     assert math.isfinite(stator.real_outlet_absolute_flow_mach)
 
 
@@ -475,31 +501,19 @@ def test_coupled_stator_iteration_supports_supersonic_solution():
     assert stator.mixing_solution == "supersonic"
 
 
-def test_coupled_conical_iteration_varies_ideal_absolute_flow_mach():
-    stator = make_stator(
-        contour_method="conical",
-        half_cone_metal_angle=15.0,
-        iterate_outlet_metal_angle=True,
-        match_real_outlet_absolute_flow_mach=True,
-    )
-    expected_area_ratio = float(isentropic_area_ratio(stator.ideal_outlet_absolute_flow_mach, stator.gamma))
-
-    assert abs(stator.real_outlet_absolute_flow_mach - stator.requested_outlet_absolute_flow_mach) < 1.0e-4
-    assert abs(stator.real_outlet_absolute_flow_angle - stator.requested_outlet_absolute_flow_angle) < 2.0e-3
-    assert not math.isclose(stator.ideal_outlet_absolute_flow_mach, stator.requested_outlet_absolute_flow_mach,
-                            rel_tol=1.0e-3)
-    assert math.isclose(stator.nondimensional_ideal_exit_area_ratio, expected_area_ratio, rel_tol=1.0e-13)
-    assert math.isclose(
-        (stator.nondimensional_shapes.uncorrected.nozzle_exit_width
-         / stator.nondimensional_shapes.uncorrected.throat_width) ** 2,
-        expected_area_ratio,
-        rel_tol=1.0e-13,
-    )
-    for evaluation in stator._evaluation_cache.values():
-        assert math.isclose(evaluation.ideal.throat_width * evaluation.dimensional_scale_factor,
-                            stator.reference_length, rel_tol=1.0e-12)
-        assert math.isclose(evaluation.ideal.trailing_edge_thickness * evaluation.dimensional_scale_factor,
-                            stator.trailing_edge_thickness, rel_tol=1.0e-12)
+def test_conical_design_changes_exit_diameter_and_length_with_requested_ideal_mach():
+    low_mach = make_stator(contour_method="conical", half_cone_metal_angle=15.0)
+    high_mach = make_stator(contour_method="conical", half_cone_metal_angle=15.0,
+                            requested_outlet_absolute_flow_mach=2.4)
+    low_shape = low_mach.dimensional_shapes.uncorrected
+    high_shape = high_mach.dimensional_shapes.uncorrected
+    expected_ratio = float(isentropic_area_ratio(2.4, high_mach.gamma))
+    assert high_mach.ideal_outlet_absolute_flow_mach == 2.4
+    assert math.isclose((high_shape.nozzle_exit_width / high_shape.throat_width) ** 2,
+                        expected_ratio, rel_tol=1.0e-13)
+    assert high_shape.nozzle_exit_width > low_shape.nozzle_exit_width
+    assert high_mach.dimensional_conical_divergent_length > low_mach.dimensional_conical_divergent_length
+    assert high_shape.throat_width == low_shape.throat_width
 
 
 @pytest.mark.parametrize(
@@ -513,7 +527,7 @@ def test_plot_uses_total_pitch_and_closes_trailing_edge(overrides):
     stator = make_stator(**overrides)
     figure, axes = stator.plot(dimensional=True, show=False)
     assert figure is axes.figure
-    assert len(axes.lines) == 10
+    assert len(axes.lines) == (10 if stator.contour_method == "moc" else 5)
 
     pressure = stator.dimensional_shapes.uncorrected.pressure_surface
     angle = math.radians(stator.outlet_metal_angle)
@@ -524,6 +538,8 @@ def test_plot_uses_total_pitch_and_closes_trailing_edge(overrides):
 
     for first_line, shape in ((0, stator.dimensional_shapes.uncorrected),
                               (5, stator.dimensional_shapes.corrected)):
+        if shape is None:
+            continue
         plotted_lines = axes.lines[first_line:first_line + 5]
         lower_pressure, lower_suction, upper_pressure, upper_suction, trailing_edge = plotted_lines
         total_pitch = 1000.0 * shape.total_pitch
@@ -538,8 +554,9 @@ def test_plot_uses_total_pitch_and_closes_trailing_edge(overrides):
         assert math.isclose(abs(np.diff(trailing_edge.get_ydata())[0]), trailing_edge_thickness, rel_tol=1.0e-12)
 
 
-def test_plot_can_retain_single_nozzle_passage_view():
-    stator = make_stator()
+@pytest.mark.parametrize("options", [{}, {"contour_method": "conical", "half_cone_metal_angle": 15.0}])
+def test_plot_can_retain_single_nozzle_passage_view(options):
+    stator = make_stator(**options)
     figure, axes = stator.plot(show_two_nozzles=False, show=False)
     assert figure is axes.figure
-    assert len(axes.lines) == 4
+    assert len(axes.lines) == (4 if stator.contour_method == "moc" else 2)

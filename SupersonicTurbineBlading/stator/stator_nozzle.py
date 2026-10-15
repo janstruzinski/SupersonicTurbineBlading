@@ -1,4 +1,4 @@
-"""Object-oriented two-dimensional supersonic stator-nozzle design."""
+"""Planar MOC stator design and inviscid conical de Laval nozzle sizing."""
 
 from __future__ import annotations
 
@@ -53,11 +53,11 @@ class _StatorEvaluation:
     :ivar float outlet_metal_angle: Nozzle outlet metal angle in the machine frame.
     :ivar IdealNozzleConstruction construction: MOC or conical construction metadata.
     :ivar NozzleShape ideal: Inviscid nozzle contour.
-    :ivar NozzleShape corrected: BL-corrected nozzle contour.
-    :ivar BoundaryLayerResult pressure_boundary_layer: Pressure-side BL at geometry stations.
-    :ivar BoundaryLayerResult suction_boundary_layer: Suction-side BL at geometry stations.
-    :ivar _CorrectedExit corrected_exit: BL quantities extrapolated through the exit correction.
-    :ivar dict mixing: AFMIX solutions using the corrected exit geometry and trailing-edge thickness.
+    :ivar corrected: BL-corrected MOC contour, or ``None`` for a conical nozzle.
+    :ivar pressure_boundary_layer: Pressure-side BL, or ``None`` for a conical nozzle.
+    :ivar suction_boundary_layer: Suction-side BL, or ``None`` for a conical nozzle.
+    :ivar corrected_exit: Extrapolated BL quantities, or ``None`` for a conical nozzle.
+    :ivar mixing: MOC AFMIX solutions, or ``None`` for a conical nozzle.
     :ivar float dimensional_scale_factor: Metres represented by one nondimensional coordinate unit.
     :ivar float dimensional_chord: Dimensional suction-wall chord, m.
     :ivar float chord_reynolds_number: Reynolds number based on ``dimensional_chord``.
@@ -68,11 +68,11 @@ class _StatorEvaluation:
     outlet_metal_angle: float
     construction: IdealNozzleConstruction
     ideal: NozzleShape
-    corrected: NozzleShape
-    pressure_boundary_layer: BoundaryLayerResult
-    suction_boundary_layer: BoundaryLayerResult
-    corrected_exit: _CorrectedExit
-    mixing: dict[str, dict[str, float | bool]]
+    corrected: NozzleShape | None
+    pressure_boundary_layer: BoundaryLayerResult | None
+    suction_boundary_layer: BoundaryLayerResult | None
+    corrected_exit: _CorrectedExit | None
+    mixing: dict[str, dict[str, float | bool]] | None
     dimensional_scale_factor: float
     dimensional_chord: float
     chord_reynolds_number: float
@@ -122,16 +122,16 @@ def _slice_boundary_layer(result: BoundaryLayerResult, count: int) -> BoundaryLa
 
 
 class SupersonicStatorNozzle:
-    """Design a two-dimensional sharp-throat supersonic turbine stator.
+    """Design a planar MOC stator or an inviscid conical de Laval nozzle.
 
     The ideal diverging contour can be either the
     method-of-characteristics construction from NASA TM X-1502 or an
     axisymmetric straight-wall (conical) de Laval nozzle sized with the
-    perfect-gas area--Mach relation. Boundary-layer displacement, the extra corrected
-    suction-side straight length, and aftermixing use NASA TM X-2343.
-    Construction is completed during initialization, so all geometry,
-    thermodynamic, boundary-layer, mixing, and dimensional results are
-    immediately available as object properties.
+    perfect-gas area--Mach relation. Only the MOC route calculates boundary-layer
+    displacement, corrected suction-side straight length, and aftermixing using NASA TM X-2343.
+    The conical route calculates ideal geometry and thermodynamic/scaling diagnostics;
+    its corrected shapes, boundary-layer results, mixing results and real outlet states are ``None``.
+    Construction is completed during initialization.
 
     Angles are measured from the machine axial direction.  This differs from
     the legacy FORTRAN input ``ALP1``, which was measured from the tangential
@@ -139,33 +139,33 @@ class SupersonicStatorNozzle:
     stationary.
 
     ``reference_length`` establishes the dimensional scale of both stored
-    geometries. For the MOC contour it is the uncorrected open circumferential
-    exit width, excluding trailing-edge metal. For the conical contour it is
+    geometries. For the MOC contour it is the uncorrected circumferential nozzle
+    width, excluding trailing-edge metal. For the conical contour it is
     the uncorrected throat diameter. The dimensional total pitch follows from
-    the open circumferential exit width plus ``trailing_edge_thickness``.
+    the circumferential nozzle width plus ``trailing_edge_thickness``.
 
     :param float requested_outlet_absolute_flow_mach: Absolute Mach target. By default this is the
         uniform ideal Mach after the diverging characteristic region and
         before aftermixing, so it must exceed one. With
-        ``match_real_outlet_absolute_flow_mach=True`` it is the desired mixed Mach.
+        ``match_real_outlet_absolute_flow_mach=True`` it is the desired mixed Mach (MOC only).
     :param float requested_outlet_absolute_flow_angle: Absolute outlet flow-angle target
         measured from the machine axial direction, degrees. By default this is
         the ideal premixing direction. With ``iterate_outlet_metal_angle=True``
-        it is the desired real aftermixed direction.
-    :param float reference_length: Uncorrected open circumferential exit width for MOC, or throat diameter for
-        the conical nozzle, m. The same scale is applied to the BL-corrected contour.
+        it is the desired real aftermixed direction (MOC only).
+    :param float reference_length: Uncorrected circumferential nozzle width for MOC, or throat diameter for
+        the conical nozzle, m. The same scale is applied to the MOC BL-corrected contour.
     :param Fluid fluid: CoolProp-backed ideal-gas mixture.
     :param float upstream_total_temperature: Stator upstream total temperature, K.
     :param float upstream_total_pressure: Stator upstream total pressure, Pa.
     :param float trailing_edge_thickness: Uncorrected circumferential trailing-edge metal thickness, m.
-        NASA TM X-2343 treats the remaining BL-corrected thickness as blockage in ``AFMIX``. The default zero retains
-        the sharp trailing-edge mixing model.
+        It sets total pitch for either contour. For MOC, NASA TM X-2343 treats the remaining BL-corrected
+        thickness as blockage in ``AFMIX``; the default zero selects its sharp trailing-edge mixing model.
     :param ContourMethod contour_method: ``"moc"`` for the NASA TM X-1502
         characteristic contour or ``"conical"`` for an axisymmetric straight-wall de Laval contour.
     :param float | None half_cone_metal_angle: Divergent-wall half angle from
         the nozzle axis, degrees. Required only for ``contour_method="conical"``.
     :param int number_of_nodes: Nodes used by each MOC, conical, or straight-wall
-        nozzle segment. The boundary-layer calculation marches directly on
+        nozzle segment. For MOC, the boundary-layer calculation marches directly on
         the assembled nozzle surface without a separate mesh.
     :param bool iterate_outlet_metal_angle: If false, the outlet metal angle equals
         ``requested_outlet_absolute_flow_angle``.  If true, it is iterated until the selected
@@ -174,22 +174,25 @@ class SupersonicStatorNozzle:
         supersonic construction Mach and outlet metal angle until the selected
         aftermixing solution matches both ``requested_outlet_absolute_flow_mach`` and
         ``requested_outlet_absolute_flow_angle``. Requires ``iterate_outlet_metal_angle=True``.
-    :param BoundaryLayerMode boundary_layer_mode: ``"fully_turbulent"`` or
-        ``"laminar_then_turbulent"``.  Both calculations start at the throat;
-        the converging subsonic contour is outside this class.
+    :param BoundaryLayerMode | None boundary_layer_mode: MOC only: ``"fully_turbulent"`` or
+        ``"laminar_then_turbulent"``; omission selects natural transition. Both start at the throat.
+        For conical nozzles this must be ``None``. The converging subsonic contour is outside this class.
     :param float | None initial_turbulent_displacement_thickness:
-        Physical turbulent displacement thickness at the throat, m.
+        Physical turbulent displacement thickness at the throat, m. MOC only.
     :param float | None initial_turbulent_momentum_thickness:
-        Physical turbulent momentum thickness at the throat, m.
+        Physical turbulent momentum thickness at the throat, m. MOC only.
     :param MixingSolutionOverride | None mixing_solution: Optional mixed-flow-solution
         override. By default, subsonic premixing axial flow uses the subsonic
         solution, while supersonic axial flow uses the shockless solution when
-        it is available. Set ``"subsonic"`` to force the subsonic solution.
+        it is available. Set ``"subsonic"`` to force the subsonic solution. MOC only.
 
-    Trailing-edge thickness sets periodic nozzle spacing and the metal blockage
-    in the NASA TM X-2343 mixed-out conservation calculation. The stored
-    pressure and suction coordinates remain the selected ideal and
-    boundary-layer-corrected contours scaled by ``reference_length``.
+    Boundary-layer inputs and mixed-flow matching controls are supported only for ``contour_method="moc"``.
+    Omit ``boundary_layer_mode`` to select natural transition for MOC and no BL calculation for conical nozzles.
+    For conical nozzles, leave both iteration flags false and omit turbulent thicknesses and ``mixing_solution``.
+
+    Trailing-edge thickness sets periodic nozzle spacing. For MOC it also sets metal blockage in
+    the NASA TM X-2343 mixed-out conservation calculation. The stored ideal and available
+    MOC corrected coordinates use the scale established by ``reference_length``.
     """
 
     def __init__(self, *, requested_outlet_absolute_flow_mach: float,
@@ -204,7 +207,7 @@ class SupersonicStatorNozzle:
         number_of_nodes: int = 101,
         iterate_outlet_metal_angle: bool = False,
         match_real_outlet_absolute_flow_mach: bool = False,
-        boundary_layer_mode: BoundaryLayerMode = "laminar_then_turbulent",
+        boundary_layer_mode: BoundaryLayerMode | None = None,
         initial_turbulent_displacement_thickness: float | None = None,
         initial_turbulent_momentum_thickness: float | None = None,
         mixing_solution: MixingSolutionOverride | None = None) -> None:
@@ -212,8 +215,8 @@ class SupersonicStatorNozzle:
 
         Constructor arguments and units are documented on
         :class:`SupersonicStatorNozzle`. Initialization calculates the sonic
-        throat state, scales the inviscid contour from the reference length, marches the BL, applies the
-        NASA TM X-2343 correction, evaluates mixing, and stores dimensional geometry.
+        throat state, scales the inviscid contour from the reference length, and stores dimensional geometry.
+        MOC designs additionally march the BL, apply the NASA TM X-2343 correction, and evaluate mixing.
 
         :raises TypeError: If an input has the wrong basic type.
         :raises ValueError: If an input is outside the selected contour model's range.
@@ -250,7 +253,9 @@ class SupersonicStatorNozzle:
         self.number_of_nodes = int(number_of_nodes)
         self.iterate_outlet_metal_angle = bool(iterate_outlet_metal_angle)
         self.match_real_outlet_absolute_flow_mach = bool(match_real_outlet_absolute_flow_mach)
-        self.boundary_layer_mode = boundary_layer_mode
+        self.boundary_layer_mode = ("laminar_then_turbulent"
+                                    if contour_method == "moc" and boundary_layer_mode is None
+                                    else boundary_layer_mode)
         self.initial_turbulent_displacement_thickness = (None if initial_turbulent_displacement_thickness is None
                                                          else float(initial_turbulent_displacement_thickness))
         self.initial_turbulent_momentum_thickness = (None if initial_turbulent_momentum_thickness is None
@@ -275,10 +280,6 @@ class SupersonicStatorNozzle:
                 if self.iterate_outlet_metal_angle else self.requested_outlet_absolute_flow_angle)
         evaluation = self._evaluate(outlet_metal_angle, ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach)
 
-        selected_solution, selected = self._select_mixing_result(evaluation.mixing)
-        if not bool(selected["available"]):
-            raise StatorDesignConvergenceError("the selected stator aftermixing solution is unavailable")
-
         self.outlet_metal_angle = float(evaluation.outlet_metal_angle)
         self.ideal_outlet_absolute_flow_mach = float(ideal_outlet_absolute_flow_mach)
         # The uniform premixing stator flow is aligned with the nozzle metal,
@@ -289,12 +290,21 @@ class SupersonicStatorNozzle:
         self.pressure_boundary_layer = evaluation.pressure_boundary_layer
         self.suction_boundary_layer = evaluation.suction_boundary_layer
         self.mixing_results = evaluation.mixing
-        self.mixing_solution = selected_solution
-        self.real_outlet_absolute_flow_angle = float(selected["real_outlet_absolute_flow_angle"])
-        self.real_outlet_absolute_flow_mach = float(selected["real_outlet_absolute_flow_mach"])
+        if evaluation.mixing is None:
+            self.mixing_solution = None
+            self.real_outlet_absolute_flow_angle = None
+            self.real_outlet_absolute_flow_mach = None
+            self.supersonic_mixing_available = None
+        else:
+            selected_solution, selected = self._select_mixing_result(evaluation.mixing)
+            if not bool(selected["available"]):
+                raise StatorDesignConvergenceError("the selected stator aftermixing solution is unavailable")
+            self.mixing_solution = selected_solution
+            self.real_outlet_absolute_flow_angle = float(selected["real_outlet_absolute_flow_angle"])
+            self.real_outlet_absolute_flow_mach = float(selected["real_outlet_absolute_flow_mach"])
+            self.supersonic_mixing_available = bool(evaluation.mixing["supersonic"]["available"])
         self.ideal_outlet_absolute_axial_flow_mach = self.ideal_outlet_absolute_flow_mach * math.cos(
             math.radians(self.ideal_outlet_absolute_flow_angle))
-        self.supersonic_mixing_available = bool(self.mixing_results["supersonic"]["available"])
         self.contour_point_count = evaluation.construction.contour_point_count
         self.pressure_number_of_nodes = evaluation.construction.pressure_point_count
         self.actual_flow_turning_increment = evaluation.construction.actual_flow_turning_increment
@@ -310,8 +320,10 @@ class SupersonicStatorNozzle:
         self.nondimensional_uncorrected_exit_area_ratio = (
             uncorrected.nozzle_exit_width / uncorrected.throat_width) ** area_ratio_exponent
         self.nondimensional_corrected_exit_area_ratio = (
-            corrected.nozzle_exit_width / corrected.throat_width) ** area_ratio_exponent
-        if uncorrected.trailing_edge_thickness > 0.0 and corrected.trailing_edge_thickness == 0.0:
+            None if corrected is None else
+            (corrected.nozzle_exit_width / corrected.throat_width) ** area_ratio_exponent)
+        if (corrected is not None and uncorrected.trailing_edge_thickness > 0.0
+            and corrected.trailing_edge_thickness == 0.0):
             warnings.warn(
                 "boundary-layer correction consumed the complete stator trailing-edge thickness; "
                 "the corrected aftermixing model uses zero remaining metal blockage",
@@ -329,14 +341,14 @@ class SupersonicStatorNozzle:
         self.dimensional_chord = evaluation.dimensional_chord
         self.chord_reynolds_number = evaluation.chord_reynolds_number
         self.dimensional_corrected_exit_displacement_thickness = (
+            None if evaluation.corrected_exit is None else
             evaluation.corrected_exit.displacement * self.dimensional_scale_factor)
         self.dimensional_corrected_exit_momentum_thickness = (
+            None if evaluation.corrected_exit is None else
             evaluation.corrected_exit.momentum * self.dimensional_scale_factor)
 
-        # The physical scale is known at initialization, unlike the rotor
-        # scale that can be supplied later.  Store both dimensional shapes
-        # immediately while retaining dimensionalize() as a convenient,
-        # idempotent public method.
+        # Store every available shape in metres immediately. dimensionalize()
+        # remains an idempotent public method for either contour route.
         self.dimensional_shapes: DimensionalNozzleShapes
         self.dimensionalize()
         self.dimensional_total_pitch = self.dimensional_shapes.uncorrected.total_pitch
@@ -391,13 +403,22 @@ class SupersonicStatorNozzle:
             raise TypeError("match_real_outlet_absolute_flow_mach must be a bool")
         if values["match_real_outlet_absolute_flow_mach"] and not values["iterate_outlet_metal_angle"]:
             raise ValueError("match_real_outlet_absolute_flow_mach=True requires iterate_outlet_metal_angle=True")
-        if values["boundary_layer_mode"] not in ("fully_turbulent", "laminar_then_turbulent"):
+        if values["boundary_layer_mode"] not in (None, "fully_turbulent", "laminar_then_turbulent"):
             raise ValueError("invalid boundary_layer_mode")
         if values["mixing_solution"] not in (None, "subsonic"):
             raise ValueError("mixing_solution must be None or 'subsonic'")
 
         displacement = values["initial_turbulent_displacement_thickness"]
         momentum = values["initial_turbulent_momentum_thickness"]
+        if contour_method == "conical":
+            for name in ("boundary_layer_mode", "initial_turbulent_displacement_thickness",
+                         "initial_turbulent_momentum_thickness", "mixing_solution"):
+                if values[name] is not None:
+                    raise ValueError(f"{name} is only supported for contour_method='moc'; conical nozzles are inviscid")
+            for name in ("iterate_outlet_metal_angle", "match_real_outlet_absolute_flow_mach"):
+                if values[name]:
+                    raise ValueError(f"{name} is only supported for contour_method='moc'; conical aftermixing is disabled")
+            return
         if values["boundary_layer_mode"] == "fully_turbulent":
             if displacement is None or momentum is None:
                 raise ValueError(
@@ -455,12 +476,12 @@ class SupersonicStatorNozzle:
 
     def _evaluate(self, outlet_metal_angle: float, *,
                   ideal_outlet_absolute_flow_mach: float | None = None) -> _StatorEvaluation:
-        """Build one angle/Mach trial, including BL correction and aftermixing.
+        """Build one angle/Mach trial; apply BL correction and aftermixing for MOC only.
 
         :param float outlet_metal_angle: Trial outlet metal angle from the machine axis, degrees.
         :param float | None ideal_outlet_absolute_flow_mach: Trial inviscid exit Mach, or the requested value when
             omitted.
-        :return: Geometry, BL results, corrected exit, dimensional scale, and mixing solutions.
+        :return: Geometry and dimensional scale, with optional MOC viscous and mixing results.
         :rtype: _StatorEvaluation
         """
 
@@ -481,17 +502,13 @@ class SupersonicStatorNozzle:
                 number_of_nodes=self.number_of_nodes,
                 gamma=self.gamma)
         else:
-            # Every coupled Mach/angle trial reaches this branch with its
-            # current ideal_outlet_absolute_flow_mach. The area ratio and cone length are
-            # therefore rebuilt when Mach is varied to meet a mixed-Mach
-            # target, rather than being frozen from the requested value.
             construction = design_conical_stator_nozzle(ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
                 outlet_metal_angle=outlet_metal_angle,
                 half_cone_metal_angle=float(self.half_cone_metal_angle),
                 number_of_nodes=self.number_of_nodes,
                 gamma=self.gamma)
-        # Hold the specified reference length fixed for every angle/Mach trial. For MOC it is the open circumferential
-        # exit width; for the conical nozzle it is the throat diameter. Metal thickness does not change this scale.
+        # Hold the reference length fixed: circumferential nozzle width for MOC,
+        # throat diameter for conical. Metal thickness does not change this scale.
         raw_shape = construction.shape
         nondimensional_reference_length = (raw_shape.nozzle_passage_pitch if self.contour_method == "moc"
                                             else raw_shape.throat_width)
@@ -504,6 +521,17 @@ class SupersonicStatorNozzle:
         throat_velocity = self.throat_static_fluid_state.speed_of_sound
         chord_reynolds_number = \
             throat_velocity * dimensional_chord / self.throat_static_fluid_state.kinematic_viscosity
+
+        if self.contour_method == "conical":
+            evaluation = _StatorEvaluation(
+                ideal_outlet_absolute_flow_mach=float(ideal_outlet_absolute_flow_mach),
+                ideal_outlet_absolute_flow_angle=ideal_outlet_absolute_flow_angle,
+                outlet_metal_angle=float(outlet_metal_angle), construction=construction, ideal=ideal,
+                corrected=None, pressure_boundary_layer=None, suction_boundary_layer=None,
+                corrected_exit=None, mixing=None, dimensional_scale_factor=dimensional_scale_factor,
+                dimensional_chord=dimensional_chord, chord_reynolds_number=chord_reynolds_number)
+            self._evaluation_cache[key] = evaluation
+            return evaluation
 
         # The BL equations use thicknesses normalized by the physical trial chord. Convert the optional dimensional
         # throat inputs once before applying the same starting state to the common wall march.
@@ -876,9 +904,9 @@ class SupersonicStatorNozzle:
             f"Mach residual={final_residual[1]:.6g}")
 
     def dimensionalize(self) -> DimensionalNozzleShapes:
-        """Store both shapes in metres using the reference-length scale factor.
+        """Store the available shapes in metres using the reference-length scale factor.
 
-        :return: Uncorrected and corrected nozzle geometries in metres with reference-length metadata.
+        :return: Ideal geometry and optional MOC corrected geometry, with reference-length metadata.
         :rtype: DimensionalNozzleShapes
         """
 
@@ -886,8 +914,8 @@ class SupersonicStatorNozzle:
             dimensional_scale_factor=self.dimensional_scale_factor,
             uncorrected=self.nondimensional_shapes.uncorrected.scaled(
                 self.dimensional_scale_factor, "dimensional [m]"),
-            corrected=self.nondimensional_shapes.corrected.scaled(
-                self.dimensional_scale_factor, "dimensional [m]"))
+            corrected=(None if self.nondimensional_shapes.corrected is None else
+                       self.nondimensional_shapes.corrected.scaled(self.dimensional_scale_factor, "dimensional [m]")))
         self.dimensional_shapes = result
         return result
 
@@ -906,7 +934,9 @@ class SupersonicStatorNozzle:
         return (surface.x * cosine - surface.y * sine, surface.x * sine + surface.y * cosine)
 
     def plot(self, *, dimensional: bool = False, show_two_nozzles: bool = True, ax=None, show: bool = True):
-        """Plot both shapes after rotation by the final outlet metal angle.
+        """Plot the ideal and available corrected shapes after rotation by the outlet metal angle.
+
+        Conical nozzles have only the ideal contour; MOC nozzles also show the BL-corrected contour.
 
         With ``show_two_nozzles=True``, a copy of each passage is translated upward by its total pitch. A vertical
         segment joins the original suction-surface exit to the translated pressure-surface exit, so the finite
@@ -933,7 +963,8 @@ class SupersonicStatorNozzle:
             # plotting copies are converted to millimetres so calculations and
             # public dimensional properties retain their original units.
             ideal = self.dimensional_shapes.uncorrected.scaled(1000.0, "dimensional [mm]")
-            corrected = self.dimensional_shapes.corrected.scaled(1000.0, "dimensional [mm]")
+            corrected = (None if self.dimensional_shapes.corrected is None else
+                         self.dimensional_shapes.corrected.scaled(1000.0, "dimensional [mm]"))
             axis_label = "length [mm]"
         else:
             ideal = self.nondimensional_shapes.uncorrected
@@ -954,8 +985,8 @@ class SupersonicStatorNozzle:
             suction_axial, suction_tangential = self._rotate(shape.suction_surface, outlet_metal_angle_rad)
             surfaces = ((pressure_axial, pressure_tangential), (suction_axial, suction_tangential))
             if show_two_nozzles:
-                # Translate by the total pitch rather than the open passage pitch. The difference leaves the
-                # selected geometry's finite trailing-edge metal between adjacent nozzle passages.
+                # Translate by total pitch, including the trailing-edge metal
+                # between neighboring nozzles as well as the circumferential nozzle width.
                 surfaces += ((pressure_axial, pressure_tangential + shape.total_pitch),
                     (suction_axial, suction_tangential + shape.total_pitch))
             for index, (axial, tangential) in enumerate(surfaces):
@@ -970,8 +1001,11 @@ class SupersonicStatorNozzle:
                     [suction_tangential[-1], pressure_tangential[-1] + shape.total_pitch],
                     linestyle, color=color, linewidth=linewidth)
 
-        plot_shape(ideal, linestyle="--", color="0.35", linewidth=1.4, label="uncorrected")
-        plot_shape(corrected, linestyle="-", color="#b23a48", linewidth=1.8, label="BL corrected")
+        if corrected is None:
+            plot_shape(ideal, linestyle="-", color="0.35", linewidth=1.4, label="ideal")
+        else:
+            plot_shape(ideal, linestyle="--", color="0.35", linewidth=1.4, label="uncorrected")
+            plot_shape(corrected, linestyle="-", color="#b23a48", linewidth=1.8, label="BL corrected")
         ax.set_aspect("equal", adjustable="datalim")
         ax.set_xlabel(f"axial {axis_label}")
         ax.set_ylabel(f"tangential {axis_label}")

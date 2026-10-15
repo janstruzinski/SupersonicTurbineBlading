@@ -18,7 +18,7 @@ working_fluid = Fluid(coolprop_names=["Nitrogen", "Oxygen"], mass_fractions=[0.7
 # ---------------------------------------------------------------------------
 moc_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77,
     requested_outlet_absolute_flow_angle=70.0,  # requested absolute outlet flow angle
-    reference_length=0.04,  # uncorrected open circumferential exit width, excluding trailing-edge metal [m]
+    reference_length=0.04,  # uncorrected circumferential nozzle width, excluding trailing-edge metal [m]
     fluid=working_fluid,
     upstream_total_temperature=900.0,  # [K]
     upstream_total_pressure=1.0e6,  # [Pa]
@@ -72,7 +72,8 @@ moc_stator.plot(dimensional=True,  # default: False; dimensional plot axes are i
 # ---------------------------------------------------------------------------
 # This case uses the same operating point and fluid so that its circular
 # throat and contour can be compared directly with the rectangular MOC case.
-# The reference length is now its throat diameter rather than the open circumferential exit width.
+# The reference length is now its throat diameter rather than the circumferential nozzle width.
+# This route calculates only ideal geometry; BL correction and aftermixing are disabled.
 conical_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77,
     requested_outlet_absolute_flow_angle=70.0,  # requested absolute outlet flow angle
     reference_length=0.01,  # uncorrected throat diameter [m]
@@ -82,13 +83,7 @@ conical_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77
     trailing_edge_thickness=0.002,  # [m]
     contour_method="conical",
     half_cone_metal_angle=15.0,  # required conical divergent half-angle
-    number_of_nodes=101,  # nodes on each divergent/straight segment and BL mesh
-    iterate_outlet_metal_angle=False,
-    match_real_outlet_absolute_flow_mach=False,
-    boundary_layer_mode="fully_turbulent",
-    initial_turbulent_displacement_thickness=2.0e-5,  # [m]
-    initial_turbulent_momentum_thickness=5.0e-6,  # [m]
-    mixing_solution="subsonic")  # force subsonic solution; omit for automatic selection
+    number_of_nodes=101)  # nodes on each ideal divergent/straight segment
 
 print("\nConical de Laval stator nozzle")
 print(f"Throat-static gamma: {conical_stator.gamma:.5f}")
@@ -100,11 +95,10 @@ print(f"Conical divergent length: {conical_stator.dimensional_conical_divergent_
 print(f"Outlet metal angle: {conical_stator.outlet_metal_angle:.3f} deg")
 print(f"Ideal absolute outlet flow Mach: {conical_stator.ideal_outlet_absolute_flow_mach:.3f}")
 print(f"Ideal absolute outlet flow angle: {conical_stator.ideal_outlet_absolute_flow_angle:.3f} deg")
-print(f"Real absolute outlet flow angle: {conical_stator.real_outlet_absolute_flow_angle:.3f} deg")
 print(f"Ideal absolute outlet axial flow Mach: {conical_stator.ideal_outlet_absolute_axial_flow_mach:.3f}")
-print(f"Shockless supersonic mixing solution available: {conical_stator.supersonic_mixing_available}")
 print(f"Calculated chord Reynolds number: {conical_stator.chord_reynolds_number:.3e}")
 
 # The same plot method rotates the meridional conical contour by the stator
-# metal angle and overlays its corrected and uncorrected shapes.
+# metal angle and displays only its ideal shape. dimensional_shapes.corrected,
+# pressure_boundary_layer, suction_boundary_layer and mixing_results are None.
 conical_stator.plot(dimensional=True, show_two_nozzles=True, ax=None, show=True)

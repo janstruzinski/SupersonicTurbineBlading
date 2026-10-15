@@ -23,11 +23,11 @@ class NozzleShape:
 
     :ivar pressure_surface: Pressure-side wall after rotation into the turbine frame.
     :ivar suction_surface: Suction-side wall after rotation into the turbine frame.
-    :ivar float chord: Axial nozzle chord in the active length scale.
+    :ivar float chord: Chord measured along the local nozzle axis in the active length scale.
     :ivar float throat_width: Full ideal throat opening in the active length scale.
     :ivar float nozzle_exit_width: Full passage width where the divergent wall meets the straight section.
-    :ivar float nozzle_passage_pitch: Open circumferential nozzle pitch in the active length scale.
-    :ivar float total_pitch: Open nozzle pitch plus trailing-edge metal thickness in the active length scale.
+    :ivar float nozzle_passage_pitch: Circumferential nozzle width in the active length scale.
+    :ivar float total_pitch: Circumferential nozzle width plus trailing-edge metal thickness in the active length scale.
     :ivar float trailing_edge_thickness: Remaining trailing-edge metal in the active length scale.
     :ivar str coordinate_scale: Human-readable description of the active length scale.
     """
@@ -64,27 +64,27 @@ class NozzleShape:
 
 @dataclass(frozen=True)
 class NozzleShapes:
-    """Store uncorrected and BL-corrected stator geometries in one coordinate scale.
+    """Store ideal geometry and the optional MOC BL-corrected geometry in one coordinate scale.
 
     :ivar NozzleShape uncorrected: Ideal nozzle geometry in the active coordinate scale.
-    :ivar NozzleShape corrected: Boundary-layer-corrected nozzle geometry in the active coordinate scale.
+    :ivar corrected: Boundary-layer-corrected geometry, or ``None`` for an inviscid conical nozzle.
     """
 
     uncorrected: NozzleShape
-    corrected: NozzleShape
+    corrected: NozzleShape | None
 
 
 @dataclass(frozen=True)
 class DimensionalNozzleShapes:
     """Store dimensional stator passages and the reference-length scale.
 
-    :ivar float reference_length: Uncorrected MOC open circumferential exit width or conical throat diameter, m.
+    :ivar float reference_length: Uncorrected MOC circumferential nozzle width or conical throat diameter, m.
     :ivar float dimensional_scale_factor: Metres represented by one nondimensional coordinate unit.
     :ivar NozzleShape uncorrected: Ideal nozzle coordinates in metres.
-    :ivar NozzleShape corrected: Boundary-layer-corrected nozzle coordinates in metres.
+    :ivar corrected: Boundary-layer-corrected coordinates in metres, or ``None`` for a conical nozzle.
     """
 
     reference_length: float
     dimensional_scale_factor: float
     uncorrected: NozzleShape
-    corrected: NozzleShape
+    corrected: NozzleShape | None
