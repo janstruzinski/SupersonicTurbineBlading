@@ -66,6 +66,18 @@ def test_fluid_rejects_invalid_composition():
         raise AssertionError("invalid mass fractions were accepted")
 
 
+def test_rotor_uses_rocket_turbines_gas():
+    IdealGas = pytest.importorskip("IdealGas").IdealGas
+    gas = IdealGas(T_min=300.0, T_max=1100.0, species=["Nitrogen", "Oxygen"],
+                   mass_fractions=[0.767, 0.233], cea_species=["N2", "O2"])
+    blade = make_blade(fluid=Fluid(ideal_gas=gas))
+    assert blade.gamma == gas.gamma
+    assert blade.inlet_total_fluid_state.specific_heat_cp == gas.Cp
+    assert blade.inlet_total_fluid_state.dynamic_viscosity == gas.calculate_dynamic_viscosity(1000.0)
+    assert blade.inlet_total_fluid_state.thermal_conductivity == gas.calculate_thermal_conductivity(1000.0)
+    assert np.all(np.isfinite(blade.suction_boundary_layer.displacement_thickness_over_chord))
+
+
 def test_prandtl_meyer_round_trip():
     for mach in (1.01, 1.5, 2.5, 5.0):
         recovered = mach_from_prandtl_meyer(prandtl_meyer_angle(mach, 1.4), 1.4)

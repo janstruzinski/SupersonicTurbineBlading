@@ -49,6 +49,18 @@ def test_stator_passes_nasa_tm_x_2343_correlation_limit(monkeypatch):
     assert observed_limits == [0.16]
 
 
+def test_stator_uses_rocket_turbines_gas():
+    IdealGas = pytest.importorskip("IdealGas").IdealGas
+    gas = IdealGas(T_min=300.0, T_max=1100.0, species=["Nitrogen", "Oxygen"],
+                   mass_fractions=[0.767, 0.233], cea_species=["N2", "O2"])
+    stator = make_stator(fluid=Fluid(ideal_gas=gas))
+    assert stator.gamma == gas.gamma
+    assert stator.throat_static_fluid_state.specific_heat_cp == gas.Cp
+    assert stator.upstream_total_fluid_state.dynamic_viscosity == gas.calculate_dynamic_viscosity(900.0)
+    assert stator.upstream_total_fluid_state.thermal_conductivity == gas.calculate_thermal_conductivity(900.0)
+    assert np.all(np.isfinite(stator.suction_boundary_layer.displacement_thickness_over_chord))
+
+
 def test_nasa_tm_x_1502_ideal_nozzle_endpoint_regression():
     # NASA TM X-1502 table II prints x=64.15586 and y=12.97935 for
     # M_e=4.05, gamma=1.36, and requested delta-v=0.1 degree. The equivalent

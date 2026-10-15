@@ -1,9 +1,11 @@
-"""Shared ideal-gas mixture properties assembled from pure-fluid CoolProp calls.
+"""Shared gas properties from pure-fluid CoolProp calls or RocketTurbines IdealGas.
 
 CoolProp can evaluate many mixtures directly.  This package deliberately
 does not use that interface, because a failed mixture flash would make otherwise simple
-preliminary designs impossible. Instead, every component is evaluated as a
-pure gas and the explicitly documented mixing rules below are applied.
+preliminary designs impossible. Objects with mixture fluids evaluate each pure
+gas species separately and apply the mixing rules below.
+Using IdealGas from RocketTurbines to construct Fluid retains IdealGas'
+supplied thermodynamics and transport models.
 """
 
 from __future__ import annotations
@@ -12,12 +14,30 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Protocol, runtime_checkable
 
 import CoolProp.CoolProp as CP
 
 
+@runtime_checkable
+class _IdealGas(Protocol):
+    """RocketTurbines interface, without requiring it as an installed dependency."""
+
+    species: Sequence[str]
+    molar_masses: Sequence[float]
+    molar_fractions: Sequence[float]
+    R: float
+    Cp: float
+    Cv: float
+    gamma: float
+
+    def calculate_dynamic_viscosity(self, T: float) -> float: ...
+
+    def calculate_thermal_conductivity(self, T: float) -> float: ...
+
+
 class FluidPropertyError(RuntimeError):
-    """Raised when CoolProp cannot provide a required gas property."""
+    """Raised when a property provider cannot evaluate a required gas property."""
 
 
 @dataclass(frozen=True)
@@ -34,15 +54,18 @@ class FluidState:
     :param float specific_heat_cp: Constant-pressure specific heat, J/(kg K).
     :param float specific_heat_cv: Ideal-gas constant-volume heat, J/(kg K).
     :param float gamma: Ratio of specific heats, dimensionless.
-    :param float dynamic_viscosity: Mass-averaged viscosity, Pa s.
+    :param float dynamic_viscosity: Mixture viscosity, Pa s.
     :param float kinematic_viscosity: ``dynamic_viscosity / density``, m²/s.
-    :param float thermal_conductivity: Mass-averaged conductivity, W/(m K).
+    :param float thermal_conductivity: Mixture conductivity, W/(m K).
     :param float prandtl_number: ``cp * dynamic_viscosity / conductivity``.
     :param float speed_of_sound: Ideal-gas speed of sound, m/s.
     :param tuple component_partial_pressures: Dalton partial pressures, Pa.
-    :param tuple component_specific_heats_cp: Pure-component ideal-gas Cp.
-    :param tuple component_dynamic_viscosities: Pure-component viscosities.
-    :param tuple component_thermal_conductivities: Pure-component conductivities.
+    :param tuple component_specific_heats_cp: Pure-component ideal-gas Cp;
+        empty when an IdealGas supplies the mixture heat capacity.
+    :param tuple component_dynamic_viscosities: Pure-component viscosities;
+        empty when an IdealGas supplies the mixture viscosity.
+    :param tuple component_thermal_conductivities: Pure-component conductivities;
+        empty when an IdealGas supplies the mixture conductivity.
     """
 
     temperature: float
@@ -63,7 +86,7 @@ class FluidState:
 
 
 class Fluid:
-    """Represent an ideal-gas mixture built from CoolProp pure fluids.
+    """Represent a CoolProp mixture or adapt a RocketTurbines IdealGas.
 
     The composition is fixed at initialization.  State-dependent properties
     are obtained later with :meth:`properties`.
@@ -75,20 +98,37 @@ class Fluid:
     :param Sequence[str] coolprop_names: CoolProp names of mixture components.
     :param Sequence[float] mass_fractions: Component mass fractions; these
         must be positive and sum to one.
+    :param ideal_gas: Optional RocketTurbines ``IdealGas`` object, used instead
+        of composition inputs. Its heat capacities, gas constant, specific-heat
+        ratio, viscosity and thermal-conductivity models are retained.
     """
 
-    def __init__(self, coolprop_names: Sequence[str], mass_fractions: Sequence[float]) -> None:
+    def __init__(self, coolprop_names: Sequence[str] | None = None,
+                 mass_fractions: Sequence[float] | None = None, *, ideal_gas: _IdealGas | None = None) -> None:
         """Create a gas mixture with fixed chemical composition.
 
-        Only composition is stored here. Temperature and pressure are supplied later to :meth:`properties`, which makes
+        Composition and any supplied IdealGas constants are stored here. State inputs go to :meth:`properties`, making
         one ``Fluid`` object reusable at all stations of the rotor, stator, and boundary-layer calculations.
 
         :param Sequence[str] coolprop_names: CoolProp names of all pure-fluid components.
         :param Sequence[float] mass_fractions: Positive component mass fractions that sum to one, -.
+        :param ideal_gas: RocketTurbines gas to adapt, mutually exclusive with composition inputs.
+        :raises TypeError: If composition inputs are missing or ideal_gas does not expose the required interface.
         :raises ValueError: If names and fractions are empty, inconsistent,
-            duplicated, non-positive, or do not sum to one.
+            duplicated, non-positive, or do not sum to one, or the IdealGas constants are inconsistent.
         :raises FluidPropertyError: If CoolProp cannot provide molar mass or gas constant for a component.
         """
+
+        self._ideal_gas = ideal_gas
+        if ideal_gas is not None:
+            if coolprop_names is not None or mass_fractions is not None:
+                raise ValueError("provide either ideal_gas or coolprop_names and mass_fractions, not both")
+            if not isinstance(ideal_gas, _IdealGas):
+                raise TypeError("ideal_gas must expose the RocketTurbines IdealGas interface, "
+                                "including calculate_thermal_conductivity")
+            coolprop_names, mass_fractions = self._ideal_gas_composition(ideal_gas)
+        elif coolprop_names is None or mass_fractions is None:
+            raise TypeError("provide coolprop_names and mass_fractions, or ideal_gas")
 
         # Copy the inputs to immutable tuples.  This prevents a caller from
         # changing a list after initialization and invalidating cached states.
@@ -117,7 +157,8 @@ class Fluid:
 
         # Molar mass is a composition constant, so it can be queried without
         # a temperature-pressure state.  CoolProp returns kg/mol.
-        molar_masses = tuple(self._trivial_property("MOLAR_MASS", name) for name in names)
+        molar_masses = (tuple(self._trivial_property("MOLAR_MASS", name) for name in names)
+                        if ideal_gas is None else tuple(float(value) for value in ideal_gas.molar_masses))
 
         # Convert the user-facing mass fractions to mole fractions.  These are
         # required only for Dalton partial pressures:
@@ -131,7 +172,8 @@ class Fluid:
         # For an ideal mixture, 1/M_mix = sum(w_i/M_i).  The mass-specific gas
         # constant then follows from R_mix = R_universal/M_mix.
         mixture_molar_mass = 1.0 / mole_amount_sum
-        universal_gas_constant = self._trivial_property("GAS_CONSTANT", names[0])
+        universal_gas_constant = (self._trivial_property("GAS_CONSTANT", names[0])
+                                  if ideal_gas is None else float(ideal_gas.R) * mixture_molar_mass)
 
         self.coolprop_names = names
         self.mass_fractions = fractions
@@ -140,6 +182,40 @@ class Fluid:
         self.molar_mass = mixture_molar_mass
         self.universal_gas_constant = universal_gas_constant
         self.specific_gas_constant = universal_gas_constant / mixture_molar_mass
+
+        if ideal_gas is not None:
+            # Copy the calorically perfect constants rather than recomputing Cp
+            # at local blade temperatures. IdealGas does not store mass fractions.
+            self.specific_gas_constant = float(ideal_gas.R)
+            self._specific_heat_cp = float(ideal_gas.Cp)
+            self._specific_heat_cv = float(ideal_gas.Cv)
+            self._gamma = float(ideal_gas.gamma)
+            constants = (self.specific_gas_constant, self._specific_heat_cp, self._specific_heat_cv, self._gamma)
+            if any(not math.isfinite(value) or value <= 0.0 for value in constants):
+                raise ValueError("IdealGas R, Cp, Cv and gamma must be positive and finite")
+            if (self._gamma <= 1.0
+                    or not math.isclose(self._specific_heat_cp - self.specific_gas_constant,
+                                        self._specific_heat_cv, rel_tol=1.0e-10)
+                    or not math.isclose(self._specific_heat_cp / self._specific_heat_cv,
+                                        self._gamma, rel_tol=1.0e-10)):
+                raise ValueError("IdealGas must satisfy Cv = Cp - R and gamma = Cp / Cv > 1")
+
+    @staticmethod
+    def _ideal_gas_composition(ideal_gas: _IdealGas) -> tuple[tuple[str, ...], tuple[float, ...]]:
+        """Recover mass fractions from IdealGas mole fractions and molar masses."""
+
+        names = tuple(ideal_gas.species)
+        molar_masses = tuple(float(value) for value in ideal_gas.molar_masses)
+        mole_fractions = tuple(float(value) for value in ideal_gas.molar_fractions)
+        if not names or len(names) != len(molar_masses) or len(names) != len(mole_fractions):
+            raise ValueError("IdealGas species, molar_masses and molar_fractions must have the same nonzero length")
+        if any(not math.isfinite(value) or value <= 0.0 for value in (*molar_masses, *mole_fractions)):
+            raise ValueError("IdealGas molar masses and mole fractions must be positive and finite")
+        if not math.isclose(math.fsum(mole_fractions), 1.0, rel_tol=0.0, abs_tol=1.0e-8):
+            raise ValueError("IdealGas mole fractions must sum to one")
+        mass_amounts = tuple(x * molar_mass for x, molar_mass in zip(mole_fractions, molar_masses))
+        mixture_molar_mass = math.fsum(mass_amounts)
+        return names, tuple(value / mixture_molar_mass for value in mass_amounts)
 
     @staticmethod
     def _trivial_property(output: str, fluid_name: str) -> float:
@@ -210,6 +286,11 @@ class Fluid:
         the ideal-gas density assumption and avoids asking CoolProp to solve a
         potentially unsupported mixture flash.
 
+        With ``ideal_gas``, heat capacities and gamma remain fixed at the
+        supplied values, and viscosity and thermal conductivity come from its
+        temperature-dependent methods. Only gas-phase checks use CoolProp. Treat the
+        supplied IdealGas as fixed after construction, as states are cached.
+
         :param float temperature: Mixture temperature, K.
         :param float pressure: Mixture absolute pressure, Pa.
         :return: Immutable SI property bundle for the requested state.
@@ -247,35 +328,48 @@ class Fluid:
         for name, partial_pressure in zip(self.coolprop_names, partial_pressures):
             self._check_gas_phase(temperature, partial_pressure, name)
 
-            # CP0MASS is CoolProp's ideal-gas Cp.  Using CPMASS here would
-            # retain real-fluid residual effects while density and Cv below
-            # deliberately use an ideal-gas model.
-            component_cp.append(self._state_property("CP0MASS", temperature, partial_pressure, name))
+            if self._ideal_gas is None:
+                # CP0MASS excludes real-fluid residual effects, consistent
+                # with the ideal-gas density and Cv used below.
+                component_cp.append(self._state_property("CP0MASS", temperature, partial_pressure, name))
 
-            # The requested viscosity mixing law is a mass-fraction average.
-            # It is simple and robust, although a Wilke-type rule is normally
-            # more accurate for mixtures with very different molecular masses.
-            component_viscosity.append(self._state_property("VISCOSITY", temperature, partial_pressure, name))
+                # Composition-based fluids use a mass-fraction viscosity average.
+                component_viscosity.append(self._state_property("VISCOSITY", temperature, partial_pressure, name))
 
-            # Thermal conductivity is the additional property required by the NASA TM X-2434 and NASA TM X-2343
-            # boundary-layer models. Prandtl number is calculated as Cp*mu/k with the same explicit mass-fraction
-            # average requested for Cp and viscosity.
-            component_conductivity.append(self._state_property("CONDUCTIVITY", temperature, partial_pressure, name))
+                component_conductivity.append(self._state_property("CONDUCTIVITY", temperature, partial_pressure, name))
 
-        specific_heat_cp = math.fsum(fraction * value for fraction, value in zip(self.mass_fractions, component_cp))
-        dynamic_viscosity = math.fsum(fraction * value
-                                      for fraction, value in zip(self.mass_fractions, component_viscosity))
-        thermal_conductivity = math.fsum(fraction * value
-                                         for fraction, value in zip(self.mass_fractions, component_conductivity))
+        if self._ideal_gas is None:
+            specific_heat_cp = math.fsum(fraction * value for fraction, value in zip(self.mass_fractions, component_cp))
+            specific_heat_cv = specific_heat_cp - self.specific_gas_constant
+            if specific_heat_cv <= 0.0:
+                raise FluidPropertyError("mixture Cp is not greater than its specific gas constant")
+            gamma = specific_heat_cp / specific_heat_cv
+            dynamic_viscosity = math.fsum(fraction * value
+                                          for fraction, value in zip(self.mass_fractions, component_viscosity))
+            thermal_conductivity = math.fsum(fraction * value
+                                             for fraction, value in zip(self.mass_fractions, component_conductivity))
+        else:
+            specific_heat_cp = self._specific_heat_cp
+            specific_heat_cv = self._specific_heat_cv
+            gamma = self._gamma
+            try:
+                dynamic_viscosity = float(self._ideal_gas.calculate_dynamic_viscosity(temperature))
+            except Exception as error:
+                raise FluidPropertyError(f"IdealGas could not evaluate viscosity at T={temperature:.6g} K") from error
+            if not math.isfinite(dynamic_viscosity) or dynamic_viscosity <= 0.0:
+                raise FluidPropertyError(f"IdealGas returned an invalid viscosity: {dynamic_viscosity}")
+            try:
+                thermal_conductivity = float(self._ideal_gas.calculate_thermal_conductivity(temperature))
+            except Exception as error:
+                raise FluidPropertyError(f"IdealGas could not evaluate thermal conductivity at "
+                                         f"T={temperature:.6g} K") from error
+            if not math.isfinite(thermal_conductivity) or thermal_conductivity <= 0.0:
+                raise FluidPropertyError(f"IdealGas returned an invalid thermal conductivity: {thermal_conductivity}")
 
         # The following properties do not require another CoolProp call.
         # They are consequences of the ideal-gas equation of state and the
         # calorically-perfect relation Cv = Cp - R_mix at this local state.
         density = pressure / (self.specific_gas_constant * temperature)
-        specific_heat_cv = specific_heat_cp - self.specific_gas_constant
-        if specific_heat_cv <= 0.0:
-            raise FluidPropertyError("mixture Cp is not greater than its specific gas constant")
-        gamma = specific_heat_cp / specific_heat_cv
         kinematic_viscosity = dynamic_viscosity / density
         prandtl_number = specific_heat_cp * dynamic_viscosity / thermal_conductivity
         speed_of_sound = math.sqrt(gamma * self.specific_gas_constant * temperature)

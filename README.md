@@ -35,11 +35,10 @@ The sharp-throat MOC stator design is based primarily on:
 The package also provides an axisymmetric, straight-wall conical de Laval nozzle. This option is sized from the
 perfect-gas area-Mach relation rather than from the two-dimensional MOC construction.
 
-All three design routes assume an isentropic, calorically perfect gas for the inviscid geometry. The ratio of specific
-heats is evaluated from the selected mixture at a representative static state and then frozen for the gas-dynamic
-construction. CoolProp transport properties may still vary along the rotor and MOC stator surfaces during the
-boundary-layer calculation. The conical de Laval route is inviscid: boundary-layer calculation, shape correction and
-aftermixing are disabled.
+All three design routes assume an isentropic, calorically perfect gas for the inviscid geometry. For composition-based
+fluids, the ratio of specific heats is evaluated at a representative static state and then frozen for construction.
+Transport properties may still vary along the rotor and MOC stator surfaces during the boundary-layer calculation.
+The conical de Laval route is inviscid: boundary-layer calculation, shape correction and aftermixing are disabled.
 
 ### Public classes
 
@@ -51,7 +50,7 @@ from SupersonicTurbineBlading import Fluid, SupersonicRotorBlade, SupersonicStat
 
 | Class | Engineering purpose |
 |---|---|
-| `Fluid` | Defines a fixed gas composition and returns properties from pure-fluid CoolProp calls. |
+| `Fluid` | Defines a fixed gas composition using CoolProp or a RocketTurbines `IdealGas`. |
 | `SupersonicRotorBlade` | Designs and scales a vortex-flow rotor section from rotor-relative flow inputs. |
 | `SupersonicStatorNozzle` | Scales and designs a planar MOC or axisymmetric conical nozzle. |
 
@@ -202,6 +201,45 @@ $$\mathrm{Pr}=\frac{c_p\mu}{k}, \qquad a=\sqrt{\gamma R_{\mathrm{mix}}T}, \qquad
 
 The viscosity and conductivity averages are deliberately simple engineering approximations. The class also checks every
 component phase at its partial-pressure state and rejects liquid or two-phase states.
+
+#### Using a RocketTurbines IdealGas
+
+An existing [`IdealGas`](https://github.com/janstruzinski/RocketTurbines/blob/dev/RocketTurbines/IdealGas.py)
+from RocketTurbines can be passed directly through the `ideal_gas` keyword to ensure `Fluid` returns the same values 
+for state and thermodynamic properties:
+
+```python
+from IdealGas import IdealGas  # Module installed by RocketTurbines
+from SupersonicTurbineBlading import Fluid
+
+gas = IdealGas(
+    T_min=500.0,
+    T_max=1100.0,
+    species=["Water", "Oxygen"],
+    mass_fractions=[0.54, 0.46],
+    cea_species=["H2O", "O2"],
+)
+working_fluid = Fluid(ideal_gas=gas)
+state = working_fluid.properties(temperature=900.0, pressure=1.0e6)
+
+assert state.specific_heat_cp == gas.Cp
+assert state.gamma == gas.gamma
+assert state.dynamic_viscosity == gas.calculate_dynamic_viscosity(900.0)
+assert state.thermal_conductivity == gas.calculate_thermal_conductivity(900.0)
+```
+
+Use `gas` for the RocketTurbines meanline calculation and pass `working_fluid` as the `fluid` argument to either
+`SupersonicRotorBlade` or `SupersonicStatorNozzle`. This keeps `R`, `Cp`, `Cv`, `gamma`, density, sound speed and the
+temperature-dependent viscosity and thermal-conductivity models consistent between the two libraries. The adapter
+recovers mass fractions from the gas object's stored mole fractions and molar masses. Heat capacities and gamma stay
+at the supplied calorically perfect values throughout the blade calculation.
+
+The `FluidState` fields `component_specific_heats_cp`, `component_dynamic_viscosities` and
+`component_thermal_conductivities` are empty tuples in this mode because the adapter uses `IdealGas` mixture values.
+Component partial pressures remain available.
+
+RocketTurbines must be installed separately to create an `IdealGas`; it is not a required dependency for
+composition-based `Fluid` objects.
 
 ### Rotor
 
