@@ -83,11 +83,11 @@ class BladeShapes:
     """Store uncorrected and BL-corrected rotor geometries in one coordinate scale.
 
     :ivar BladeShape uncorrected: Inviscid rotor geometry.
-    :ivar BladeShape corrected: Boundary-layer-corrected rotor geometry.
+    :ivar corrected: Boundary-layer-corrected rotor geometry, or ``None`` when BL calculation is disabled.
     """
 
     uncorrected: BladeShape
-    corrected: BladeShape
+    corrected: BladeShape | None
 
 
 @dataclass(frozen=True)
@@ -120,11 +120,11 @@ class DimensionalBladeShapes:
     :ivar int blade_count: Number of equally spaced rotor blades.
     :ivar float sonic_radius_scale: Dimensional vortex sonic radius ``r*``, m.
     :ivar BladeShape uncorrected: Ideal MOC blade coordinates in metres.
-    :ivar BladeShape corrected: Boundary-layer-corrected blade coordinates in metres.
+    :ivar corrected: Boundary-layer-corrected blade coordinates in metres, or ``None`` when BL calculation is disabled.
     """
 
     mean_radius: float
     blade_count: int
     sonic_radius_scale: float
     uncorrected: BladeShape
-    corrected: BladeShape
+    corrected: BladeShape | None

@@ -64,7 +64,7 @@ The package also exposes result containers useful in engineering scripts:
 | `FluidState` | Thermodynamic and transport properties at one temperature and pressure.                    |
 | `SurfaceCoordinates` | Coordinates, framed flow-Mach array and surface `metal_angle`.                              |
 | `BladeShape`, `NozzleShape` | `pressure_surface`, `suction_surface` and nondimensional passage dimensions. |
-| `BladeShapes`, `NozzleShapes` | Ideal and BL-corrected geometries; the conical nozzle's `corrected` shape is `None`. |
+| `BladeShapes`, `NozzleShapes` | Ideal and optional BL-corrected geometries; `corrected` is `None` when BL calculation is disabled. |
 | `DimensionalBladeShapes`, `DimensionalNozzleShapes` | Geometry in metres. |
 | `BoundaryLayerResult` | Boundary-layer thicknesses, freestream flow Mach and transition or separation data.        |
 | `FlowStateTable` | Printable summary of the principal rotor-relative flow states. |
@@ -337,6 +337,7 @@ arcs. The most important optional inputs used above are:
 | `leading_edge_thickness_over_total_pitch` | Ratio $t_{\mathrm{LE}}/G^{\ast}_{\mathrm{total}}$; default zero. |
 | `use_leading_edge_entry_correction` | Corrects inlet Mach and flow angle for finite thickness; default `True`. |
 | `calculate_starting` | Runs the NASA TN D-4421 supersonic-starting feasibility calculation; default `True`.          |
+| `calculate_boundary_layer` | Calculates BL correction and aftermixing; default `True`. Set `False` for ideal geometry only. |
 
 Useful properties available after construction include:
 
@@ -812,6 +813,29 @@ stores `absolute_flow_mach`, while `relative_flow_mach` is `None`. The `metal_an
 Additional nozzle design features of `stator_nozzle.py` are documented below.
 
 ### Boundary-layer correction
+
+#### Geometry without BL correction
+
+Both `SupersonicRotorBlade` and `SupersonicStatorNozzle` accept `calculate_boundary_layer=False`.
+The default is `True`; conical stator nozzles always skip BL calculations.
+Disabling this setting skips the BL solver, displacement correction and aftermixing. The uncorrected geometry
+and its dimensional scale are calculated as usual, while both shape containers' `corrected` fields,
+`pressure_boundary_layer`, `suction_boundary_layer`, `mixing_results`, `mixing_solution` and real outlet
+states are `None`.
+
+When BL calculation is disabled, `iterate_outlet_metal_angle`, rotor `match_real_outlet_mach`,
+stator `match_real_outlet_absolute_flow_mach` and rotor `iterate_passage_pitch_closure` are automatically
+set to `False`. A supplied `mixing_solution` override is cleared. One `UserWarning` lists the overridden options.
+BL mode and initial turbulent thickness inputs are ignored and their stored attributes are set to `None`.
+Requested outlet Mach and angle are used directly for the ideal construction, so the Mach must be supersonic.
+
+Rotor corrected pitch residuals, trailing-edge thickness diagnostics and corrected CAD arrays
+(`blade_profile_x_CAD`, `blade_profile_y_CAD`) are also `None`. Use `uncorrected_blade_profile_x_CAD`
+and `uncorrected_blade_profile_y_CAD` for CAD export. The flow-state table omits aftermixed outlet rows.
+The inlet-entry correction and optional starting calculation remain available because they are independent of BL.
+Stator corrected exit area and thickness diagnostics are `None`.
+Both classes' `plot()` methods display only the uncorrected shape in this mode, including the rotor's default
+`corrected=True` call.
 
 #### Common theory and implementation
 

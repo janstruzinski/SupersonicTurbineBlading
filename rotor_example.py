@@ -30,6 +30,7 @@ blade = SupersonicRotorBlade(ideal_inlet_relative_flow_mach=1.8,  # ideal rotor-
     # Transform ideal far-field relative flow to the real passage-entry state. Default: True.
     use_leading_edge_entry_correction=True,
     calculate_starting=False,  # default: True
+    calculate_boundary_layer=True,  # set False for uncorrected geometry only; BL dependent options are then disabled
     # Boundary layer calculations are "laminar_then_turbulent", with no initial thickness inputs
     boundary_layer_mode="laminar_then_turbulent",
     # Iterate pitch closure to maintain the same leading and trailing edge thickness
@@ -46,7 +47,7 @@ if blade.starting_result is not None:
           f"{blade.starting_result.maximum_starting_ideal_inlet_relative_flow_mach:.3f}")
 
 blade.dimensionalize()
-# CAD-ready BL-corrected single-blade profile [mm]; the origin occurs once.
+# CAD-ready BL-corrected single-blade profile [mm]; None when calculate_boundary_layer=False.
 blade_x_mm = blade.blade_profile_x_CAD
 blade_y_mm = blade.blade_profile_y_CAD
 # The corresponding ideal profile uses the same point order and units.

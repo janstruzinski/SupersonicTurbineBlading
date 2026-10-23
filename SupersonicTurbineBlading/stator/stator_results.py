@@ -67,7 +67,7 @@ class NozzleShapes:
     """Store ideal geometry and the optional MOC BL-corrected geometry in one coordinate scale.
 
     :ivar NozzleShape uncorrected: Ideal nozzle geometry in the active coordinate scale.
-    :ivar corrected: Boundary-layer-corrected geometry, or ``None`` for an inviscid conical nozzle.
+    :ivar corrected: Boundary-layer-corrected geometry, or ``None`` when BL calculation is disabled.
     """
 
     uncorrected: NozzleShape
@@ -81,7 +81,7 @@ class DimensionalNozzleShapes:
     :ivar float reference_length: Uncorrected MOC circumferential nozzle width or conical throat diameter, m.
     :ivar float dimensional_scale_factor: Metres represented by one nondimensional coordinate unit.
     :ivar NozzleShape uncorrected: Ideal nozzle coordinates in metres.
-    :ivar corrected: Boundary-layer-corrected coordinates in metres, or ``None`` for a conical nozzle.
+    :ivar corrected: Boundary-layer-corrected coordinates in metres, or ``None`` when BL calculation is disabled.
     """
 
     reference_length: float

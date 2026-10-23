@@ -194,6 +194,7 @@ def test_nasa_tn_d_4422_impulse_blade_solidities(
 
 def test_object_stores_ideal_and_corrected_shapes():
     blade = make_blade()
+    assert blade.calculate_boundary_layer is True
     uncorrected = blade.nondimensional_shapes.uncorrected
     corrected = blade.nondimensional_shapes.corrected
     assert uncorrected.coordinate_scale == "vortex sonic radius r*"
@@ -236,6 +237,91 @@ def test_object_stores_ideal_and_corrected_shapes():
         blade.pressure_boundary_layer.momentum_thickness_over_chord[0], 6.0e-5 / blade.dimensional_chord,
         rel_tol=1.0e-12
     )
+
+
+@pytest.mark.parametrize("thickness_ratio", [0.0, 0.20])
+def test_rotor_without_boundary_layer_keeps_only_ideal_geometry(monkeypatch, thickness_ratio):
+    import matplotlib.pyplot as plt
+
+    reference = make_blade(leading_edge_thickness_over_total_pitch=thickness_ratio)
+
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("disabled BL must skip the BL solver, correction, aftermixing and outlet iterations")
+
+    monkeypatch.setattr(rotor_blade_module, "solve_boundary_layer", unexpected_call)
+    for name in ("_correct_shape", "_aftermixing", "_select_mixing_result",
+                 "_solve_outlet_metal_angle_for_target_flow", "_solve_outlet_metal_angle_and_flow_mach_targets",
+                 "_solve_outlet_metal_angle_for_passage_pitch_closure"):
+        monkeypatch.setattr(SupersonicRotorBlade, name, unexpected_call)
+    blade = make_blade(calculate_boundary_layer=False, leading_edge_thickness_over_total_pitch=thickness_ratio,
+                       initial_turbulent_displacement_thickness=None, initial_turbulent_momentum_thickness=None,
+                       calculate_starting=True)
+
+    assert blade.calculate_boundary_layer is False
+    for name in ("boundary_layer_mode", "initial_turbulent_displacement_thickness",
+                 "initial_turbulent_momentum_thickness", "pressure_boundary_layer", "suction_boundary_layer",
+                 "mixing_results", "mixing_solution", "real_outlet_relative_flow_mach",
+                 "real_outlet_relative_flow_angle", "real_outlet_relative_axial_flow_mach",
+                 "supersonic_mixing_available", "corrected_passage_pitch_residual", "passage_pitch_residual",
+                 "passage_pitch_closure_residual", "trailing_edge_thickness", "dimensional_trailing_edge_thickness",
+                 "trailing_edge_vertical_boundary_layer_height", "blade_profile_x_CAD", "blade_profile_y_CAD"):
+        assert getattr(blade, name) is None
+    assert blade.nondimensional_shapes.corrected is None
+    assert blade.dimensionalize().corrected is None
+    assert blade.starting_result is not None
+    assert blade.outlet_metal_angle == blade.requested_outlet_relative_flow_angle
+    assert blade.ideal_outlet_relative_flow_mach == blade.ideal_inlet_relative_flow_mach
+    assert blade.dimensional_chord == reference.dimensional_chord
+    assert blade.dimensional_leading_edge_thickness == reference.dimensional_leading_edge_thickness
+    assert np.array_equal(blade.uncorrected_blade_profile_x_CAD, reference.uncorrected_blade_profile_x_CAD)
+    assert np.array_equal(blade.uncorrected_blade_profile_y_CAD, reference.uncorrected_blade_profile_y_CAD)
+    for name in ("pressure_surface", "suction_surface"):
+        surface = getattr(blade.nondimensional_shapes.uncorrected, name)
+        expected = getattr(reference.nondimensional_shapes.uncorrected, name)
+        assert np.array_equal(surface.x, expected.x)
+        assert np.array_equal(surface.y, expected.y)
+    assert len(blade.flow_state_table.rows) == 6
+    assert "Real Mach number at the blade outlet" not in str(blade.flow_state_table)
+    assert math.isfinite(blade.ideal_outlet_relative_axial_flow_mach)
+    for dimensional in (False, True):
+        for corrected in (False, True):
+            figure, axes = blade.plot(dimensional=dimensional, corrected=corrected, show=False)
+            assert axes.get_legend_handles_labels()[1] == ["uncorrected"]
+            assert len(axes.lines) == 8
+            plt.close(figure)
+
+
+@pytest.mark.parametrize("options", [
+    {"iterate_outlet_metal_angle": True},
+    {"match_real_outlet_mach": True},
+    {"iterate_passage_pitch_closure": True},
+    {"mixing_solution": "subsonic"},
+    {"iterate_outlet_metal_angle": True, "match_real_outlet_mach": True,
+     "iterate_passage_pitch_closure": True, "mixing_solution": "subsonic"},
+])
+def test_rotor_without_boundary_layer_overrides_dependent_controls_with_warning(monkeypatch, options):
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("disabled BL controls must never run outlet iterations")
+
+    for name in ("_solve_outlet_metal_angle_for_target_flow", "_solve_outlet_metal_angle_and_flow_mach_targets",
+                 "_solve_outlet_metal_angle_for_passage_pitch_closure"):
+        monkeypatch.setattr(SupersonicRotorBlade, name, unexpected_call)
+    with pytest.warns(UserWarning, match="calculate_boundary_layer=False disables") as captured:
+        blade = make_blade(calculate_boundary_layer=False, **options)
+    assert len(captured) == 1
+    for name in options:
+        assert name in str(captured[0].message)
+    assert blade.iterate_outlet_metal_angle is False
+    assert blade.match_real_outlet_mach is False
+    assert blade.iterate_passage_pitch_closure is False
+    assert blade.mixing_solution is None
+    assert blade.outlet_metal_angle == blade.requested_outlet_relative_flow_angle
+
+
+@pytest.mark.parametrize("value", [None, 0, "False"])
+def test_rotor_requires_boolean_boundary_layer_setting(value):
+    with pytest.raises(TypeError, match="calculate_boundary_layer must be a bool"):
+        make_blade(calculate_boundary_layer=value)
 
 
 def test_rotor_scalar_flow_results_use_the_relative_frame():

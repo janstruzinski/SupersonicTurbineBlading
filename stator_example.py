@@ -35,6 +35,7 @@ moc_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77,
     # Default: False. True jointly iterates ideal flow Mach and outlet metal
     # angle until aftermixing reaches both requested absolute flow targets.
     match_real_outlet_absolute_flow_mach=False,
+    calculate_boundary_layer=True,  # set False for uncorrected geometry only; BL dependent options are then disabled
     # This example starts a known turbulent layer at the throat.  In
     # laminar_then_turbulent mode both thickness inputs must be omitted.
     boundary_layer_mode="fully_turbulent",  # default: laminar then turbulent
@@ -54,7 +55,8 @@ print(f"Uncorrected geometric area ratio: {moc_stator.nondimensional_uncorrected
 print(f"Outlet metal angle: {moc_stator.outlet_metal_angle:.3f} deg")
 print(f"Ideal absolute outlet flow Mach: {moc_stator.ideal_outlet_absolute_flow_mach:.3f}")
 print(f"Ideal absolute outlet flow angle: {moc_stator.ideal_outlet_absolute_flow_angle:.3f} deg")
-print(f"Real absolute outlet flow angle: {moc_stator.real_outlet_absolute_flow_angle:.3f} deg")
+if moc_stator.real_outlet_absolute_flow_angle is not None:
+    print(f"Real absolute outlet flow angle: {moc_stator.real_outlet_absolute_flow_angle:.3f} deg")
 print(f"Ideal absolute outlet axial flow Mach: {moc_stator.ideal_outlet_absolute_axial_flow_mach:.3f}")
 print(f"Shockless supersonic mixing solution available: {moc_stator.supersonic_mixing_available}")
 print(f"Calculated chord Reynolds number: {moc_stator.chord_reynolds_number:.3e}")
