@@ -26,7 +26,7 @@ moc_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77,
     trailing_edge_thickness=0.002,  # [m]; default: 0.0
     # Choose exactly one contour method. For a conical nozzle, use
     # contour_method="conical", use throat diameter as reference_length,
-    # and provide half_cone_metal_angle (for example 15).
+    # and optionally set half_cone_metal_angle (default: 7 degrees).
     contour_method="moc",  # default: "moc"
     number_of_nodes=101,  # default: 101; nodes on each nozzle segment and BL mesh
     # False is the zero-deviation assumption. Set True to vary the outlet metal
@@ -84,7 +84,7 @@ conical_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77
     upstream_total_pressure=1.0e6,  # [Pa]
     trailing_edge_thickness=0.002,  # [m]
     contour_method="conical",
-    half_cone_metal_angle=15.0,  # required conical divergent half-angle
+    half_cone_metal_angle=7.0,  # conical divergent half-angle [deg]; default: 7.0
     number_of_nodes=101)  # nodes on each ideal divergent/straight segment
 
 print("\nConical de Laval stator nozzle")

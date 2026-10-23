@@ -164,7 +164,8 @@ class SupersonicStatorNozzle:
     :param ContourMethod contour_method: ``"moc"`` for the NASA TM X-1502
         characteristic contour or ``"conical"`` for an axisymmetric straight-wall de Laval contour.
     :param float | None half_cone_metal_angle: Divergent-wall half angle from
-        the nozzle axis, degrees. Required only for ``contour_method="conical"``.
+        the nozzle axis, degrees. Defaults to 7 degrees for ``contour_method="conical"``;
+        must be omitted for ``contour_method="moc"``.
     :param int number_of_nodes: Nodes used by each MOC, conical, or straight-wall
         nozzle segment. For MOC, the boundary-layer calculation marches directly on
         the assembled nozzle surface without a separate mesh.
@@ -230,6 +231,9 @@ class SupersonicStatorNozzle:
         :raises ValueError: If an input is outside the selected contour model's range.
         :raises StatorDesignConvergenceError: If a throat-state or optional outlet solve fails.
         """
+
+        if contour_method == "conical" and half_cone_metal_angle is None:
+            half_cone_metal_angle = 7.0
 
         # Validate the mode-dependent arguments before converting values. This
         # keeps MOC-only and conical-only input errors close to the user call.
@@ -410,8 +414,6 @@ class SupersonicStatorNozzle:
             if half_cone_metal_angle is not None:
                 raise ValueError("half_cone_metal_angle is only valid for contour_method='conical'")
         else:
-            if half_cone_metal_angle is None:
-                raise ValueError("contour_method='conical' requires half_cone_metal_angle")
             if not (math.isfinite(half_cone_metal_angle) and 0.0 < half_cone_metal_angle < 90.0):
                 raise ValueError("half_cone_metal_angle must be between 0 and 90")
         if (not isinstance(values["number_of_nodes"], int)

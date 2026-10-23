@@ -246,7 +246,6 @@ def test_conical_contour_is_inviscid_and_skips_bl_correction_and_mixing(monkeypa
     monkeypatch.setattr(SupersonicStatorNozzle, "_select_mixing_result", unexpected_call)
     stator = make_stator(
         contour_method="conical",
-        half_cone_metal_angle=15.0,
         calculate_boundary_layer=calculate_boundary_layer,
     )
     expected_area_ratio = float(isentropic_area_ratio(stator.ideal_outlet_absolute_flow_mach, stator.gamma))
@@ -401,7 +400,6 @@ def test_stator_without_boundary_layer_requires_supersonic_ideal_mach():
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
-        ({"contour_method": "conical"}, "requires half_cone_metal_angle"),
         ({"half_cone_metal_angle": 15.0}, "only valid"),
         (
             {"contour_method": "conical", "half_cone_metal_angle": 90.0},

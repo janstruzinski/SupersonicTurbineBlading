@@ -626,7 +626,7 @@ conical_stator = SupersonicStatorNozzle(
     upstream_total_pressure=1.0e6,     # Pa
     trailing_edge_thickness=0.002,    # uncorrected circumferential metal thickness, m
     contour_method="conical",
-    half_cone_metal_angle=15.0,
+    half_cone_metal_angle=7.0,        # default divergent half-angle, degrees
     number_of_nodes=101,                # nodes on each divergent/straight segment
 )
 
@@ -640,8 +640,8 @@ ideal_conical = conical_stator.nondimensional_shapes.uncorrected
 ideal_conical_m = conical_stator.dimensional_shapes.uncorrected
 ```
 
-`half_cone_metal_angle` is the divergent-wall half angle from the nozzle axis and must lie between 0 and 90 degrees.
-`half_cone_metal_angle` must be omitted for a MOC nozzle.
+`half_cone_metal_angle` is the divergent-wall half angle from the nozzle axis, defaults to 7 degrees for a conical
+nozzle, and must lie between 0 and 90 degrees. `half_cone_metal_angle` must be omitted for a MOC nozzle.
 
 The conical route has no corrected shape or real aftermixed outlet state. `nondimensional_shapes.corrected`,
 `dimensional_shapes.corrected`, `pressure_boundary_layer`, `suction_boundary_layer`, `mixing_results`,
