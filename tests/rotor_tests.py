@@ -251,7 +251,7 @@ def test_rotor_without_boundary_layer_keeps_only_ideal_geometry(monkeypatch, thi
     monkeypatch.setattr(rotor_blade_module, "solve_boundary_layer", unexpected_call)
     for name in ("_correct_shape", "_aftermixing", "_select_mixing_result",
                  "_solve_outlet_metal_angle_for_target_flow", "_solve_outlet_metal_angle_and_flow_mach_targets",
-                 "_solve_outlet_metal_angle_for_passage_pitch_closure"):
+                 "_solve_thickness_match"):
         monkeypatch.setattr(SupersonicRotorBlade, name, unexpected_call)
     blade = make_blade(calculate_boundary_layer=False, leading_edge_thickness_over_total_pitch=thickness_ratio,
                        initial_turbulent_displacement_thickness=None, initial_turbulent_momentum_thickness=None,
@@ -263,7 +263,7 @@ def test_rotor_without_boundary_layer_keeps_only_ideal_geometry(monkeypatch, thi
                  "mixing_results", "mixing_solution", "real_outlet_relative_flow_mach",
                  "real_outlet_relative_flow_angle", "real_outlet_relative_axial_flow_mach",
                  "supersonic_mixing_available", "corrected_passage_pitch_residual", "passage_pitch_residual",
-                 "passage_pitch_closure_residual", "trailing_edge_thickness", "dimensional_trailing_edge_thickness",
+                 "trailing_edge_thickness", "dimensional_trailing_edge_thickness",
                  "trailing_edge_vertical_boundary_layer_height", "blade_profile_x_CAD", "blade_profile_y_CAD"):
         assert getattr(blade, name) is None
     assert blade.nondimensional_shapes.corrected is None
@@ -294,17 +294,16 @@ def test_rotor_without_boundary_layer_keeps_only_ideal_geometry(monkeypatch, thi
 @pytest.mark.parametrize("options", [
     {"iterate_outlet_metal_angle": True},
     {"match_real_outlet_mach": True},
-    {"iterate_passage_pitch_closure": True},
     {"mixing_solution": "subsonic"},
     {"iterate_outlet_metal_angle": True, "match_real_outlet_mach": True,
-     "iterate_passage_pitch_closure": True, "mixing_solution": "subsonic"},
+     "mixing_solution": "subsonic"},
 ])
 def test_rotor_without_boundary_layer_overrides_dependent_controls_with_warning(monkeypatch, options):
     def unexpected_call(*args, **kwargs):
         pytest.fail("disabled BL controls must never run outlet iterations")
 
     for name in ("_solve_outlet_metal_angle_for_target_flow", "_solve_outlet_metal_angle_and_flow_mach_targets",
-                 "_solve_outlet_metal_angle_for_passage_pitch_closure"):
+                 "_solve_thickness_match"):
         monkeypatch.setattr(SupersonicRotorBlade, name, unexpected_call)
     with pytest.warns(UserWarning, match="calculate_boundary_layer=False disables") as captured:
         blade = make_blade(calculate_boundary_layer=False, **options)
@@ -313,7 +312,7 @@ def test_rotor_without_boundary_layer_overrides_dependent_controls_with_warning(
         assert name in str(captured[0].message)
     assert blade.iterate_outlet_metal_angle is False
     assert blade.match_real_outlet_mach is False
-    assert blade.iterate_passage_pitch_closure is False
+    assert blade.match_LE_and_TE_thickness is False
     assert blade.mixing_solution is None
     assert blade.outlet_metal_angle == blade.requested_outlet_relative_flow_angle
 
@@ -622,44 +621,130 @@ def test_coupled_iteration_matches_real_relative_flow_mach_and_angle():
     )
 
 
-def test_legacy_passage_pitch_closure_changes_metal_angle_and_closes_nasa_tm_x_2434_pitch():
-    with pytest.warns(UserWarning, match="changes the outlet.*angle"):
-        blade = make_blade(iterate_passage_pitch_closure=True, mixing_solution="subsonic", number_of_nodes=101)
+@pytest.mark.parametrize("method", ["angle", "mach"])
+@pytest.mark.parametrize("thickness_ratio", [0.0, 0.05])
+def test_thickness_matching_closes_both_shapes_and_their_cad_profiles(method, thickness_ratio):
+    blade = make_blade(match_LE_and_TE_thickness=True,
+                       match_thickness_with_angle=method == "angle", match_thickness_with_mach=method == "mach",
+                       leading_edge_thickness_over_total_pitch=thickness_ratio)
+    dimensional = blade.dimensionalize()
+    for name, x, y in (
+        ("uncorrected", blade.uncorrected_blade_profile_x_CAD, blade.uncorrected_blade_profile_y_CAD),
+        ("corrected", blade.blade_profile_x_CAD, blade.blade_profile_y_CAD),
+    ):
+        shape = getattr(blade.nondimensional_shapes, name)
+        scaled = getattr(dimensional, name)
+        residual_m = (shape.outlet_passage_pitch - shape.inlet_passage_pitch) * blade.sonic_radius_scale
+        assert abs(residual_m) <= 1.0e-6
+        assert shape.thickness_matching_iteration_count > 0
+        assert math.isclose(shape.leading_edge_thickness, shape.trailing_edge_thickness, abs_tol=1.0e-8)
+        assert scaled.ideal_outlet_relative_flow_mach == shape.ideal_outlet_relative_flow_mach
+        assert scaled.outlet_metal_angle == shape.outlet_metal_angle
+        assert scaled.thickness_matching_iteration_count == shape.thickness_matching_iteration_count
+        assert math.isclose(scaled.leading_edge_thickness, scaled.trailing_edge_thickness, abs_tol=1.0e-6)
+        # Measure the exported coordinates, independently of the reported thickness diagnostics.
+        trailing_index = len(shape.pressure_surface.x) - 1
+        assert math.isclose(x[trailing_index], x[trailing_index + 1], abs_tol=1.0e-10)
+        te_mm = y[trailing_index + 1] - y[trailing_index]
+        le_mm = scaled.leading_edge_thickness * 1000.0
+        assert math.isclose(te_mm, le_mm, abs_tol=1.0e-3)
+        if thickness_ratio > 0.0:
+            assert math.isclose(y[-1] - y[0], le_mm, abs_tol=1.0e-10)
+        for surface in (shape.pressure_surface, shape.suction_surface):
+            assert math.isclose(surface.relative_flow_mach[-1], shape.ideal_outlet_relative_flow_mach, rel_tol=1.0e-12)
+        if method == "angle":
+            assert shape.ideal_outlet_relative_flow_mach == blade.ideal_inlet_relative_flow_mach
+        else:
+            assert shape.outlet_metal_angle == blade.requested_outlet_relative_flow_angle
+    uncorrected, corrected = blade.nondimensional_shapes.uncorrected, blade.nondimensional_shapes.corrected
+    assert blade.ideal_outlet_relative_flow_mach == corrected.ideal_outlet_relative_flow_mach
+    assert blade.outlet_metal_angle == corrected.outlet_metal_angle
+    assert abs(blade.passage_pitch_residual * blade.sonic_radius_scale) <= 1.0e-6
+    # Nonzero inlet BL makes closing corrected out vs. ideal in the wrong constraint.
+    reference = blade.boundary_layer_reference_shape
+    assert not math.isclose(corrected.outlet_passage_pitch, reference.inlet_passage_pitch, abs_tol=1.0e-4)
+    variable = "outlet_metal_angle" if method == "angle" else "ideal_outlet_relative_flow_mach"
+    assert not math.isclose(getattr(uncorrected, variable), getattr(corrected, variable), rel_tol=1.0e-5)
 
-    assert blade.passage_pitch_closure_iteration_count is not None
-    assert blade.passage_pitch_closure_outlet_metal_angle == blade.outlet_metal_angle
-    assert not math.isclose(blade.ideal_outlet_relative_flow_angle, blade.requested_outlet_relative_flow_angle,
-                            abs_tol=1.0e-3)
-    assert abs(blade.passage_pitch_closure_residual * blade.sonic_radius_scale) <= 1.0e-6
-    assert blade.passage_pitch_residual == blade.passage_pitch_closure_residual
-    assert not math.isclose(
-        blade.corrected_passage_pitch_residual, blade.passage_pitch_closure_residual, abs_tol=1.0e-4)
+
+@pytest.mark.parametrize("method", ["angle", "mach"])
+def test_thickness_matching_without_boundary_layers_matches_only_uncorrected_shape(monkeypatch, method):
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("uncorrected thickness matching must not calculate boundary layers or aftermixing")
+
+    monkeypatch.setattr(rotor_blade_module, "solve_boundary_layer", unexpected_call)
+    monkeypatch.setattr(SupersonicRotorBlade, "_aftermixing", unexpected_call)
+    blade = make_blade(calculate_boundary_layer=False, match_LE_and_TE_thickness=True,
+                       match_thickness_with_angle=method == "angle", match_thickness_with_mach=method == "mach",
+                       leading_edge_thickness_over_total_pitch=0.05)
+    shape = blade.nondimensional_shapes.uncorrected
+    assert blade.match_LE_and_TE_thickness
+    assert blade.nondimensional_shapes.corrected is None
+    assert blade.boundary_layer_reference_shape is None
+    assert abs((shape.outlet_passage_pitch - shape.inlet_passage_pitch) * blade.sonic_radius_scale) <= 1.0e-6
+    assert blade.ideal_outlet_relative_flow_mach == shape.ideal_outlet_relative_flow_mach
+    assert blade.outlet_metal_angle == shape.outlet_metal_angle
 
 
-def test_passage_pitch_closure_keeps_trailing_edge_as_thick_as_leading_edge():
-    with pytest.warns(UserWarning, match="changes the outlet.*angle"):
-        blade = make_blade(
-            iterate_passage_pitch_closure=True, leading_edge_thickness_over_total_pitch=0.05, number_of_nodes=101
-        )
-
-    assert blade.trailing_edge_thickness == blade.leading_edge_thickness
-    assert blade.dimensional_trailing_edge_thickness == blade.dimensional_leading_edge_thickness
+def test_thickness_matching_defaults_to_angle_and_keeps_explicit_ideal_mach():
+    blade = make_blade(match_LE_and_TE_thickness=True, requested_outlet_relative_flow_mach=2.4)
+    assert blade.match_thickness_with_angle is True
+    assert blade.match_thickness_with_mach is False
+    for shape in (blade.nondimensional_shapes.uncorrected, blade.nondimensional_shapes.corrected):
+        assert shape.ideal_outlet_relative_flow_mach == 2.4
 
 
-@pytest.mark.parametrize(
-    "matching_flags",
-    [
-        {"iterate_outlet_metal_angle": True},
-        {
-            "iterate_outlet_metal_angle": True,
-            "match_real_outlet_mach": True,
-            "requested_outlet_relative_flow_mach": 2.1,
-        },
-    ],
-)
-def test_passage_pitch_closure_rejects_mixed_flow_matching(matching_flags):
+@pytest.mark.parametrize("angle,mach", [(False, False), (True, True)])
+def test_thickness_matching_requires_exactly_one_method(angle, mach):
+    with pytest.raises(ValueError, match="exactly one"):
+        make_blade(match_LE_and_TE_thickness=True, match_thickness_with_angle=angle, match_thickness_with_mach=mach)
+
+
+@pytest.mark.parametrize("name", ["match_LE_and_TE_thickness", "match_thickness_with_angle", "match_thickness_with_mach"])
+@pytest.mark.parametrize("value", [None, 0, "False"])
+def test_thickness_matching_controls_require_booleans(name, value):
+    with pytest.raises(TypeError, match=name):
+        make_blade(**{name: value})
+
+
+@pytest.mark.parametrize("matching_flags", [
+    {"iterate_outlet_metal_angle": True},
+    {"iterate_outlet_metal_angle": True, "match_real_outlet_mach": True,
+     "requested_outlet_relative_flow_mach": 2.1},
+])
+def test_thickness_matching_rejects_mixed_flow_matching(matching_flags):
     with pytest.raises(ValueError, match="incompatible"):
-        make_blade(iterate_passage_pitch_closure=True, **matching_flags)
+        make_blade(match_LE_and_TE_thickness=True, **matching_flags)
+
+
+def test_old_passage_pitch_closure_keyword_has_been_replaced():
+    with pytest.raises(TypeError, match="iterate_passage_pitch_closure"):
+        make_blade(iterate_passage_pitch_closure=True)
+
+
+@pytest.mark.parametrize("method", ["angle", "mach"])
+def test_thickness_matching_natural_transition_and_plotted_edges(method):
+    import matplotlib.pyplot as plt
+
+    blade = make_blade(match_LE_and_TE_thickness=True,
+                       match_thickness_with_angle=method == "angle", match_thickness_with_mach=method == "mach",
+                       leading_edge_thickness_over_total_pitch=0.05, boundary_layer_mode="laminar_then_turbulent",
+                       initial_turbulent_displacement_thickness=None, initial_turbulent_momentum_thickness=None)
+    for dimensional in (False, True):
+        for corrected in (False, True):
+            figure, axes = blade.plot(dimensional=dimensional, corrected=corrected, show=False)
+            le = axes.lines[4].get_ydata()
+            te = axes.lines[6].get_ydata()
+            tolerance = 1.0e-3 if dimensional else 1.0e-6 / blade.sonic_radius_scale
+            assert math.isclose(abs(le[1] - le[0]), abs(te[1] - te[0]), abs_tol=tolerance)
+            plt.close(figure)
+
+
+def test_unattainable_mach_thickness_match_raises_instead_of_returning_unmatched_shape():
+    with pytest.raises(rotor_blade_module.DesignConvergenceError, match="uncorrected LE/TE thickness matching"):
+        make_blade(calculate_boundary_layer=False, match_LE_and_TE_thickness=True,
+                   match_thickness_with_angle=False, match_thickness_with_mach=True,
+                   requested_outlet_relative_flow_angle=-20.0)
 
 
 def test_subsonic_premixing_axial_mach_selects_subsonic_solution():
@@ -920,8 +1005,8 @@ def test_cad_profiles_store_corrected_and_uncorrected_geometry_in_millimetres(th
                 profile_y_CAD[-1], 1000.0 * blade.dimensional_leading_edge_thickness, rel_tol=1.0e-12)
 
 
-def test_plot_connectors_follow_corrected_or_uncorrected_line_style_without_passage_pitch_closure():
-    blade = make_blade(iterate_passage_pitch_closure=False, leading_edge_thickness_over_total_pitch=0.20)
+def test_plot_connectors_follow_corrected_or_uncorrected_line_style_without_thickness_matching():
+    blade = make_blade(match_LE_and_TE_thickness=False, leading_edge_thickness_over_total_pitch=0.20)
 
     for corrected in (True, False):
         figure, axes = blade.plot(corrected=corrected, show=False)

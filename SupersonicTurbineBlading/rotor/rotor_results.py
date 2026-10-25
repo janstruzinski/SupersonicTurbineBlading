@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import ClassVar
 
 from ..common_results import SurfaceCoordinates
@@ -50,6 +50,12 @@ class BladeShape:
     :ivar float outlet_passage_pitch: Open outlet passage width in the active length scale.
     :ivar float max_flow_turning_increment: Largest flow-turning increment between adjacent MOC nodes, deg.
     :ivar str coordinate_scale: Human-readable description of the active length scale.
+    :ivar float ideal_outlet_relative_flow_mach: Ideal outlet Mach used to construct this shape.
+    :ivar float outlet_metal_angle: Signed outlet metal angle used to construct this shape, deg.
+    :ivar float leading_edge_thickness: Circumferential LE metal thickness in the active length scale.
+    :ivar float trailing_edge_thickness: Actual circumferential TE separation of the assembled profile; may be
+        negative for an unmatched geometry whose two surfaces cross.
+    :ivar int | None thickness_matching_iteration_count: Number of trials in this shape's thickness solve.
     """
 
     pressure_surface: SurfaceCoordinates
@@ -59,6 +65,11 @@ class BladeShape:
     outlet_passage_pitch: float
     max_flow_turning_increment: float
     coordinate_scale: str
+    ideal_outlet_relative_flow_mach: float | None = None
+    outlet_metal_angle: float | None = None
+    leading_edge_thickness: float = 0.0
+    trailing_edge_thickness: float = 0.0
+    thickness_matching_iteration_count: int | None = None
 
     def scaled(self, factor: float, scale_name: str) -> BladeShape:
         """Return a geometrically scaled copy.
@@ -69,12 +80,13 @@ class BladeShape:
         :rtype: BladeShape
         """
 
-        return BladeShape(pressure_surface=self.pressure_surface.scaled(factor),
+        return replace(self, pressure_surface=self.pressure_surface.scaled(factor),
                           suction_surface=self.suction_surface.scaled(factor),
                           chord=self.chord * factor,
                           inlet_passage_pitch=self.inlet_passage_pitch * factor,
                           outlet_passage_pitch=self.outlet_passage_pitch * factor,
-                          max_flow_turning_increment=self.max_flow_turning_increment,
+                          leading_edge_thickness=self.leading_edge_thickness * factor,
+                          trailing_edge_thickness=self.trailing_edge_thickness * factor,
                           coordinate_scale=scale_name)
 
 

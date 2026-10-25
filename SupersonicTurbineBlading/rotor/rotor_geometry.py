@@ -419,4 +419,7 @@ def design_ideal_geometry(*, real_inlet_relative_flow_mach: float,
                       chord=chord, inlet_passage_pitch=float(inlet_passage_pitch),
                       outlet_passage_pitch=float(outlet_passage_pitch),
                       max_flow_turning_increment=max_flow_turning_increment,
-                      coordinate_scale="vortex sonic radius r*")
+                      coordinate_scale="vortex sonic radius r*",
+                      ideal_outlet_relative_flow_mach=float(ideal_outlet_relative_flow_mach),
+                      outlet_metal_angle=float(outlet_metal_angle),
+                      trailing_edge_thickness=float(inlet_passage_pitch - outlet_passage_pitch))

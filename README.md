@@ -325,7 +325,7 @@ ideal_profile_y_mm = blade.uncorrected_blade_profile_y_CAD
 The three required rotor flow inputs are `ideal_inlet_relative_flow_mach`, `ideal_inlet_relative_flow_angle` and
 `requested_outlet_relative_flow_angle`. The optional `requested_outlet_relative_flow_mach` specifies the ideal
 premixing outlet Mach. Omitting it selects the impulse assumption
-$M_{\mathrm{rel,out}}=M_{\mathrm{rel,in}}$.
+$M_{\mathrm{rel,out}}=M_{\mathrm{rel,in}}$. With Mach-based thickness matching, this value is the initial estimate.
 
 The remaining required inputs describe the machine, thermodynamic operating point and two constant-Mach surface
 arcs. The most important optional inputs used above are:
@@ -338,6 +338,9 @@ arcs. The most important optional inputs used above are:
 | `use_leading_edge_entry_correction` | Corrects inlet Mach and flow angle for finite thickness; default `True`. |
 | `calculate_starting` | Runs the NASA TN D-4421 supersonic-starting feasibility calculation; default `True`.          |
 | `calculate_boundary_layer` | Calculates BL correction and aftermixing; default `True`. Set `False` for ideal geometry only. |
+| `match_LE_and_TE_thickness` | Independently match LE and TE thickness for each shape; default `False`. |
+| `match_thickness_with_angle` | Vary outlet metal angle at fixed ideal outlet Mach; default `True`. |
+| `match_thickness_with_mach` | Vary ideal outlet Mach at fixed metal angle; default `False`. |
 
 Useful properties available after construction include:
 
@@ -352,6 +355,7 @@ Useful properties available after construction include:
 | `outlet_metal_angle` | Outlet metal angle in the stationary machine frame. |
 | `max_flow_turning_increment` | Largest turning increment between adjacent MOC nodes, in degrees. |
 | `nondimensional_shapes.uncorrected` | Ideal surfaces, chord and open pitches in one `BladeShape`. |
+| `boundary_layer_reference_shape` | Inviscid geometry used for the final BL calculation; `None` when BL is disabled. |
 | `dimensional_shapes.uncorrected` | The same ideal `BladeShape` in metres after dimensionalization. |
 | `dimensional_total_pitch`, `dimensional_passage_pitch` | Total and open inlet passage pitches in metres. |
 | `sonic_radius_scale`, `dimensional_chord`, `chord_reynolds_number` | Dimensional scale and inlet Reynolds number. |
@@ -368,6 +372,14 @@ the Mach-number row at the same station.
 `BladeShape.pressure_surface` and `BladeShape.suction_surface` are the two rotor `SurfaceCoordinates` objects. Each
 provides `x`, `y`, `relative_flow_mach` and `metal_angle` arrays at matching stations. The local `metal_angle` array is
 stored in degrees.
+
+Each `BladeShape` also stores `ideal_outlet_relative_flow_mach`, signed `outlet_metal_angle`,
+`leading_edge_thickness` and `trailing_edge_thickness`. Thicknesses use the shape's length scale and are scaled
+by `BladeShape.scaled(...)`. These thicknesses are circumferential projections of LE and TE. Shape-level TE thickness
+measures the actual separation in the assembled sunction and pressure surface; it can be negative for an geometry without
+LE and TE matching and with BL correction. Shapes with and without BL correction have independent LE and TE matching
+(if switched on) and can have different outlet Mach numbers or angles. Scalar blade flow states, BL results, chord,
+Reynolds number and solidity refer to the corrected design when BL is enabled, and to the uncorrected design otherwise.
 
 #### Theory of `SupersonicRotorBlade`
 
@@ -824,12 +836,13 @@ and its dimensional scale are calculated as usual, while both shape containers' 
 states are `None`.
 
 When BL calculation is disabled, `iterate_outlet_metal_angle`, rotor `match_real_outlet_mach`,
-stator `match_real_outlet_absolute_flow_mach` and rotor `iterate_passage_pitch_closure` are automatically
+and stator `match_real_outlet_absolute_flow_mach` are automatically
 set to `False`. A supplied `mixing_solution` override is cleared. One `UserWarning` lists the overridden options.
 BL mode and initial turbulent thickness inputs are ignored and their stored attributes are set to `None`.
-Requested outlet Mach and angle are used directly for the ideal construction, so the Mach must be supersonic.
+Requested outlet Mach and angle are used directly unless rotor thickness matching is enabled; that option still
+matches the uncorrected shape when BL is disabled. The ideal construction requires supersonic Mach.
 
-Rotor corrected pitch residuals, trailing-edge thickness diagnostics and corrected CAD arrays
+Rotor corrected pitch residuals, scalar trailing-edge thickness diagnostics and corrected CAD arrays
 (`blade_profile_x_CAD`, `blade_profile_y_CAD`) are also `None`. Use `uncorrected_blade_profile_x_CAD`
 and `uncorrected_blade_profile_y_CAD` for CAD export. The flow-state table omits aftermixed outlet rows.
 The inlet-entry correction and optional starting calculation remain available because they are independent of BL.
@@ -972,15 +985,17 @@ where $\eta$ is the local surface tangent angle. The pressure surface moves upwa
 away from the open passage. Inlet and outlet open pitches are then recalculated from the displaced endpoints and their
 uniform-flow directions.
 
-Without legacy pitch closure, the finite trailing-edge metal remaining between the displaced surfaces is
+Without thickness matching, the existing aftermixing model estimates the remaining trailing-edge metal thickness as
 
 $$t^{\ast}_{\mathrm{TE}}=\max\left[0,
 t^{\ast}_{\mathrm{LE}}-\left(|\Delta y_{p,\mathrm{TE}}|+|\Delta y_{s,\mathrm{TE}}|\right)\right].$$
 
-With legacy pitch closure, the model carries $t^{\ast}_{\mathrm{LE}}$ through to the trailing edge. It varies
-`outlet_metal_angle`, so the requested outlet flow direction is only an initial estimate and not a strict requirement.
-This iterative scheme is explained later in the documentation. In both cases the resulting thickness is used in the
-rotor mixed-out blockage calculation.
+With `match_LE_and_TE_thickness=True`, the uncorrected and corrected shapes each close their own inlet/outlet
+passage pitch, making the actual LE and TE thicknesses equal within each shape. The selected method varies
+`outlet_metal_angle` or the ideal outlet Mach. With thickness matching enabled, the rotor aftermixing calculation
+uses the prescribed LE thickness as the corrected blade's TE metal thickness when calculating outlet blockage,
+since the two thicknesses are equal within the matching tolerance. Both methods are explained in the iterative
+schemes section below.
 
 Rotor controls and outputs are:
 
@@ -1092,8 +1107,8 @@ with `ideal_outlet_absolute_axial_flow_mach` and `supersonic_mixing_available` p
 
 By default, the requested outlet flow angle and Mach define the ideal premixing state. The optional matching schemes
 instead interpret one or both requested quantities as real aftermixed targets and vary the metal angle or passage outlet
-flow Mach needed to reach them. A separate rotor pitch-closure scheme varies the outlet metal angle to match inlet and
-outlet pitch.
+flow Mach needed to reach them. A separate rotor thickness-matching scheme varies outlet metal angle or ideal outlet
+Mach to match LE and TE thickness independently in each shape.
 
 #### Rotor iterative schemes
 
@@ -1141,28 +1156,65 @@ The final premixing values remain available as `ideal_outlet_relative_flow_mach`
 `ideal_outlet_relative_flow_angle`. The Mach-target flag requires `iterate_outlet_metal_angle=True` and a supplied
 `requested_outlet_relative_flow_mach`.
 
-##### Legacy passage-pitch closure
+##### Matching leading- and trailing-edge thickness
 
-Set
+`match_LE_and_TE_thickness` (default `False`) ensures that LE and TE thickness values are equal
+Enable angle matching with:
 
 ```python
-iterate_passage_pitch_closure=True
+match_LE_and_TE_thickness=True,
+match_thickness_with_angle=True,   # default
+match_thickness_with_mach=False,   # default
 ```
 
-to reproduce the NASA TM X-2434 `BETAT` closure. It holds `ideal_outlet_relative_flow_mach` fixed and varies
-`outlet_metal_angle` until
+This varies `outlet_metal_angle`, holding the ideal outlet Mach fixed at `requested_outlet_relative_flow_mach`
+(or `ideal_inlet_relative_flow_mach` if omitted). The requested outlet angle is only the starting estimate.
+Alternatively, select Mach matching with:
 
-$$G^{\ast}_{\mathrm{out,corr}}-G^{\ast}_{\mathrm{in,ideal}}=0.$$
+```python
+match_LE_and_TE_thickness=True,
+match_thickness_with_angle=False,
+match_thickness_with_mach=True,
+```
 
-This allows to keep the same leading and trailing edge thickness for the rotor blade when boundary layer correction is
-used. The first unbracketed update follows the legacy mass-continuity expression; once trial geometries exist on both
-sides of equal passage pitch, SciPy's bracketed Brent scheme refines the solution.
+This holds `outlet_metal_angle` at `requested_outlet_relative_flow_angle` and varies the ideal outlet Mach.
+The requested outlet Mach, or the inlet Mach when omitted, supplies the starting estimate. Exactly one method must
+be true when the parent option is enabled; both method flags are inactive when the parent is false.
 
-In this mode, `requested_outlet_relative_flow_angle` is only the initial estimate, and the final outlet direction will
-generally differ. Construction therefore emits a warning. Passage-pitch closure is incompatible with
-`iterate_outlet_metal_angle=True` and
-`match_real_outlet_mach=True`. `passage_pitch_closure_iteration_count`,
-`passage_pitch_closure_outlet_metal_angle` and `passage_pitch_closure_residual` report the result.
+Each shape is solved independently with bounded nonlinear least squares, using its own residual:
+
+$$G^{\ast}_{\mathrm{out,uncorr}}-G^{\ast}_{\mathrm{in,uncorr}}=0, \qquad
+G^{\ast}_{\mathrm{out,corr}}-G^{\ast}_{\mathrm{in,corr}}=0.$$
+
+Both residuals must satisfy a dimensional tolerance of $10^{-6}$ m. Thickness matching makes the LE and TE metal
+thicknesses equal in the plotted and exported profiles. For the corrected shape, the matching accounts for BL
+displacement at both the inlet and outlet. The two shapes generally require different final angles (angle mode) or Mach
+numbers (Mach mode). `boundary_layer_reference_shape` stores the inviscid geometry used to generate the final BL-corrected shape.
+Because thickness matching is performed separately for each shape, this reference geometry may differ from the stored
+uncorrected shape.
+
+The final values are stored on each shape:
+
+```python
+uncorrected = blade.nondimensional_shapes.uncorrected
+uncorrected.ideal_outlet_relative_flow_mach
+uncorrected.outlet_metal_angle
+uncorrected.leading_edge_thickness
+uncorrected.trailing_edge_thickness
+uncorrected.thickness_matching_iteration_count
+
+corrected = blade.nondimensional_shapes.corrected  # None when BL calculation is disabled
+# The same fields are available on corrected and on both dimensional shapes.
+```
+
+`blade.ideal_outlet_relative_flow_mach` and `blade.outlet_metal_angle` report the final corrected design values when BL
+is enabled, and the uncorrected state otherwise. `corrected_passage_pitch_residual` and `passage_pitch_residual`
+report corrected outlet minus corrected inlet pitch. The residual for uncorrected shape is
+`uncorrected.outlet_passage_pitch - uncorrected.inlet_passage_pitch`.
+
+Thickness matching is incompatible with `iterate_outlet_metal_angle=True` or `match_real_outlet_mach=True`.
+With `calculate_boundary_layer=False`, only the uncorrected shape is matched; no BL or aftermixing trials are run.
+A design without a feasible matching solution raises `DesignConvergenceError`.
 
 #### Stator iterative schemes
 

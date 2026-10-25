@@ -33,14 +33,20 @@ blade = SupersonicRotorBlade(ideal_inlet_relative_flow_mach=1.8,  # ideal rotor-
     calculate_boundary_layer=True,  # set False for uncorrected geometry only; BL dependent options are then disabled
     # Boundary layer calculations are "laminar_then_turbulent", with no initial thickness inputs
     boundary_layer_mode="laminar_then_turbulent",
-    # Iterate pitch closure to maintain the same leading and trailing edge thickness
-    iterate_passage_pitch_closure=False)
+    # Independently match LE/TE thickness for each shape, using exactly one method.
+    match_LE_and_TE_thickness=False,
+    match_thickness_with_angle=True,  # vary outlet metal angle at fixed ideal outlet Mach
+    match_thickness_with_mach=False)  # set angle=False and mach=True to vary ideal outlet Mach instead
 
 print(f"Frozen inlet-static gamma: {blade.gamma:.5f}")
 print(f"Solidity: {blade.solidity:.3f}")
 print(blade.flow_state_table)
 print(f"Inlet metal angle: {blade.inlet_metal_angle:.3f} deg")
 print(f"Outlet metal angle: {blade.outlet_metal_angle:.3f} deg")
+print(f"Final ideal outlet relative Mach: {blade.ideal_outlet_relative_flow_mach:.5f}")
+# Each shape stores its own design state, which can differ when thickness matching is enabled:
+# blade.nondimensional_shapes.uncorrected.ideal_outlet_relative_flow_mach
+# blade.nondimensional_shapes.corrected.ideal_outlet_relative_flow_mach  (when BL is enabled)
 print(f"Solidity: {blade.solidity:.3f}")
 if blade.starting_result is not None:
     print("Maximum starting ideal inlet relative flow Mach: "

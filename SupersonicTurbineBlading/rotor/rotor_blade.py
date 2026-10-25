@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import math
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import numpy as np
-from scipy.optimize import brentq, fixed_point, least_squares, toms748
+from scipy.optimize import fixed_point, least_squares, toms748
 
 from ..boundary_layer.boundary_layer_solver import BoundaryLayerError, BoundaryLayerMode, solve_boundary_layer
 from ..common_results import BoundaryLayerResult, SurfaceCoordinates
 from ..fluid import Fluid, FluidState
-from ..gas_dynamics import isentropic_area_ratio, mach_from_prandtl_meyer, mass_flow_parameter, prandtl_meyer_angle
+from ..gas_dynamics import isentropic_area_ratio, mach_from_prandtl_meyer, prandtl_meyer_angle
 from .rotor_geometry import GeometryError, design_ideal_geometry
 from .rotor_results import BladeShape, BladeShapes, DimensionalBladeShapes, FlowStateTable
 from .rotor_starting import calculate_starting_limit
@@ -94,10 +94,11 @@ class SupersonicRotorBlade:
         axial direction toward the direction of rotation, degrees.
     :param float requested_outlet_relative_flow_angle: Rotor-relative ideal outlet flow angle, degrees;
         normally negative for the NASA TN D-4421 turbine convention. With ``iterate_outlet_metal_angle=True`` it is
-        instead the desired real aftermixed direction.
+        instead the desired real aftermixed direction. With angle-based thickness matching it is an initial estimate.
     :param float | None requested_outlet_relative_flow_mach: Rotor-relative outlet Mach target. By default it is
         the uniform ideal value before aftermixing. With ``match_real_outlet_mach=True`` it is instead the desired
-        mixed value. Omission selects the impulse-rotor assumption ``M_out,rel=M_in,rel``.
+        mixed value. Mach-based thickness matching uses it as an initial estimate. Omission selects
+        ``M_out,rel=M_in,rel`` as the fixed value or the initial estimate, depending on the matching method.
     :param float lower_surface_relative_flow_mach: Rotor-relative constant-Mach pressure-
         surface arc value.
     :param float upper_surface_relative_flow_mach: Rotor-relative constant-Mach suction-
@@ -121,11 +122,14 @@ class SupersonicRotorBlade:
         the ideal relative outlet Mach until the mixed relative Mach equals the
         requested relative outlet Mach. This requires
         ``iterate_outlet_metal_angle=True`` and a supplied requested outlet Mach.
-    :param bool iterate_passage_pitch_closure: If true, use the NASA TM X-2434 iteration to
-        change the outlet metal angle until the BL-corrected outlet
-        passage pitch equals the ideal inlet passage pitch. The supplied relative outlet
-        angle is only an initial estimate. This option is incompatible with
-        either mixed-flow angle or Mach matching.
+    :param bool match_LE_and_TE_thickness: Independently match LE and TE metal thickness for the
+        uncorrected and BL-corrected shapes; default false. Each shape closes its own inlet/outlet
+        passage pitch and stores its own final outlet Mach and angle. Incompatible with mixed-flow matching.
+    :param bool match_thickness_with_angle: Vary outlet metal angle at fixed ideal outlet Mach; default true.
+        The requested outlet angle is the initial estimate. Used only when thickness matching is enabled.
+    :param bool match_thickness_with_mach: Vary ideal outlet Mach at fixed outlet metal angle; default false.
+        The requested outlet Mach (or inlet Mach if omitted) is the initial estimate. Exactly one of the
+        two thickness methods must be true when matching is enabled.
     :param float leading_edge_thickness_over_total_pitch: Leading-edge blade
         thickness divided by total blade pitch, ``t_LE/G*_total``. The
         default zero recovers the sharp-edge geometry exactly.
@@ -138,9 +142,10 @@ class SupersonicRotorBlade:
     :param bool calculate_starting: Run the NASA TN D-4421 starting feasibility test.
     :param bool calculate_boundary_layer: Calculate BL correction and aftermixing; default ``True``.
         If false, store only uncorrected shapes. BL results, corrected CAD profiles, corrected pitch residuals,
-        trailing-edge thickness diagnostics and real outlet states are ``None``. Mixed-flow matching,
-        passage-pitch closure and a mixing-solution override are disabled with a warning if supplied.
-        The independent inlet-entry correction and optional starting check still apply.
+        scalar trailing-edge thickness diagnostics and real outlet states are ``None``. Mixed-flow matching
+        and a mixing-solution override are disabled with a warning if supplied. Thickness matching
+        still applies to the uncorrected shape. The independent inlet-entry correction and optional starting check
+         still apply.
     :param BoundaryLayerMode boundary_layer_mode: ``"fully_turbulent"`` or
         ``"laminar_then_turbulent"``; both start at the rotor inlet. Ignored along with initial thicknesses
         when ``calculate_boundary_layer=False``.
@@ -186,7 +191,9 @@ class SupersonicRotorBlade:
         number_of_nodes: int = 101,
         iterate_outlet_metal_angle: bool = False,
         match_real_outlet_mach: bool = False,
-        iterate_passage_pitch_closure: bool = False,
+        match_LE_and_TE_thickness: bool = False,
+        match_thickness_with_angle: bool = True,
+        match_thickness_with_mach: bool = False,
         leading_edge_thickness_over_total_pitch: float = 0.0,
         use_leading_edge_entry_correction: bool = True,
         calculate_starting: bool = True,
@@ -226,7 +233,9 @@ class SupersonicRotorBlade:
             number_of_nodes=number_of_nodes,
             iterate_outlet_metal_angle=iterate_outlet_metal_angle,
             match_real_outlet_mach=match_real_outlet_mach,
-            iterate_passage_pitch_closure=iterate_passage_pitch_closure,
+            match_LE_and_TE_thickness=match_LE_and_TE_thickness,
+            match_thickness_with_angle=match_thickness_with_angle,
+            match_thickness_with_mach=match_thickness_with_mach,
             leading_edge_thickness_over_total_pitch=leading_edge_thickness_over_total_pitch,
             use_leading_edge_entry_correction=use_leading_edge_entry_correction,
             calculate_boundary_layer=calculate_boundary_layer,
@@ -289,7 +298,9 @@ class SupersonicRotorBlade:
         self.number_of_nodes = int(number_of_nodes)
         self.iterate_outlet_metal_angle = iterate_outlet_metal_angle and calculate_boundary_layer
         self.match_real_outlet_mach = match_real_outlet_mach and calculate_boundary_layer
-        self.iterate_passage_pitch_closure = iterate_passage_pitch_closure and calculate_boundary_layer
+        self.match_LE_and_TE_thickness = match_LE_and_TE_thickness
+        self.match_thickness_with_angle = match_thickness_with_angle
+        self.match_thickness_with_mach = match_thickness_with_mach
         self.calculate_starting = bool(calculate_starting)
         self.calculate_boundary_layer = calculate_boundary_layer
         self.boundary_layer_mode = boundary_layer_mode if calculate_boundary_layer else None
@@ -304,14 +315,12 @@ class SupersonicRotorBlade:
             disabled_options = [name for name, enabled in (
                 ("iterate_outlet_metal_angle", iterate_outlet_metal_angle),
                 ("match_real_outlet_mach", match_real_outlet_mach),
-                ("iterate_passage_pitch_closure", iterate_passage_pitch_closure),
                 ("mixing_solution", mixing_solution is not None)) if enabled]
             if disabled_options:
                 warnings.warn("calculate_boundary_layer=False disables " + ", ".join(disabled_options),
                               UserWarning, stacklevel=2)
         self._evaluation_cache: dict[tuple[float, float], _RotorEvaluation] = {}
         self.dimensional_shapes: DimensionalBladeShapes | None = None
-        self.passage_pitch_closure_iteration_count: int | None = None
 
         # Without Mach matching, omission of an outlet Mach selects the impulse-rotor assumption. Angle iteration
         # repeatedly rebuilds the geometry, both boundary layers, and aftermixing solution because blockage changes
@@ -319,17 +328,16 @@ class SupersonicRotorBlade:
         ideal_outlet_relative_flow_mach = (self.ideal_inlet_relative_flow_mach
                                            if self.requested_outlet_relative_flow_mach is None
                                            else self.requested_outlet_relative_flow_mach)
-        if self.iterate_passage_pitch_closure:
-            initial_outlet_metal_angle = self.requested_outlet_relative_flow_angle
-            outlet_metal_angle = self._solve_outlet_metal_angle_for_passage_pitch_closure(
-                initial_outlet_metal_angle=initial_outlet_metal_angle,
-                ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach)
-            warnings.warn("legacy pitch closure changes the outlet metal angle from its "
-                f"initial {initial_outlet_metal_angle:.6g} deg to "
-                f"{outlet_metal_angle:.6g} deg; requested_outlet_relative_flow_angle is used only "
-                "as the initial estimate",
-                UserWarning,
-                stacklevel=2)
+        uncorrected_shape = None
+        matched_corrected_shape = None
+        if self.match_LE_and_TE_thickness:
+            initial_mach = ideal_outlet_relative_flow_mach
+            initial_angle = self.requested_outlet_relative_flow_angle
+            ideal_outlet_relative_flow_mach, outlet_metal_angle, uncorrected_shape = self._solve_thickness_match(
+                initial_mach=initial_mach, initial_angle=initial_angle, corrected=False)
+            if self.calculate_boundary_layer:
+                ideal_outlet_relative_flow_mach, outlet_metal_angle, matched_corrected_shape = \
+                    self._solve_thickness_match(initial_mach=initial_mach, initial_angle=initial_angle, corrected=True)
         elif self.match_real_outlet_mach:
             outlet_metal_angle, ideal_outlet_relative_flow_mach = \
                 self._solve_outlet_metal_angle_and_flow_mach_targets()
@@ -348,20 +356,17 @@ class SupersonicRotorBlade:
         # Zero deviation makes the ideal relative-flow and metal angles
         # numerically equal; retain independent public quantities.
         self.outlet_metal_angle = float(outlet_metal_angle)
-        self.passage_pitch_closure_outlet_metal_angle = (
-            float(outlet_metal_angle) if self.iterate_passage_pitch_closure else None)
         self.nondimensional_shapes: BladeShapes = \
-            BladeShapes(uncorrected=evaluation.ideal, corrected=evaluation.corrected)
+            BladeShapes(uncorrected=evaluation.ideal if uncorrected_shape is None else uncorrected_shape,
+                        corrected=evaluation.corrected if matched_corrected_shape is None else matched_corrected_shape)
+        # Independently matched shapes can have different design states. BL results and scalar
+        # flow/dimensional diagnostics refer to the corrected design when it is available.
+        self.boundary_layer_reference_shape = evaluation.ideal if self.calculate_boundary_layer else None
         self.max_flow_turning_increment = evaluation.ideal.max_flow_turning_increment
         self.pressure_boundary_layer = evaluation.pressure_boundary_layer
         self.suction_boundary_layer = evaluation.suction_boundary_layer
         self.corrected_passage_pitch_residual = evaluation.passage_pitch_residual
-        self.passage_pitch_closure_residual = (
-            None if evaluation.corrected is None else
-            float(evaluation.corrected.outlet_passage_pitch - evaluation.ideal.inlet_passage_pitch))
-        self.passage_pitch_residual = (self.passage_pitch_closure_residual
-                                       if self.iterate_passage_pitch_closure
-                                       else self.corrected_passage_pitch_residual)
+        self.passage_pitch_residual = self.corrected_passage_pitch_residual
         self.inlet_passage_pitch = float(evaluation.ideal.inlet_passage_pitch)
         self.inlet_total_pitch = self.inlet_passage_pitch / (1.0 - self.leading_edge_thickness_over_total_pitch)
         self.solidity = float(evaluation.ideal.chord / self.inlet_total_pitch)
@@ -371,7 +376,7 @@ class SupersonicRotorBlade:
         if (self.calculate_boundary_layer and self.leading_edge_thickness > 0.0
             and self.trailing_edge_thickness == 0.0
             and self.trailing_edge_vertical_boundary_layer_height > self.leading_edge_thickness
-            and not self.iterate_passage_pitch_closure):
+            and not self.match_LE_and_TE_thickness):
             warnings.warn("the summed vertical trailing-edge boundary-layer displacement "
                 "exceeds t_LE; t_TE is limited to zero",
                 RuntimeWarning,
@@ -418,7 +423,7 @@ class SupersonicRotorBlade:
             self.dimensional_trailing_edge_thickness = None
         else:
             self.dimensional_trailing_edge_thickness = (self.dimensional_leading_edge_thickness
-                                                        if self.iterate_passage_pitch_closure else
+                                                        if self.match_LE_and_TE_thickness else
                                                         self.trailing_edge_thickness * final_scale.sonic_radius)
         self.sonic_radius_scale = final_scale.sonic_radius
         self.dimensional_chord = final_scale.chord
@@ -485,8 +490,13 @@ class SupersonicRotorBlade:
             raise TypeError("iterate_outlet_metal_angle must be a bool")
         if not isinstance(values["match_real_outlet_mach"], bool):
             raise TypeError("match_real_outlet_mach must be a bool")
-        if not isinstance(values["iterate_passage_pitch_closure"], bool):
-            raise TypeError("iterate_passage_pitch_closure must be a bool")
+        for name in ("match_LE_and_TE_thickness", "match_thickness_with_angle", "match_thickness_with_mach"):
+            if not isinstance(values[name], bool):
+                raise TypeError(f"{name} must be a bool")
+        if values["match_LE_and_TE_thickness"] and (
+            values["match_thickness_with_angle"] == values["match_thickness_with_mach"]):
+            raise ValueError("match_LE_and_TE_thickness=True requires exactly one of "
+                             "match_thickness_with_angle and match_thickness_with_mach")
         thickness_ratio = values["leading_edge_thickness_over_total_pitch"]
         if not math.isfinite(thickness_ratio) or not 0.0 <= thickness_ratio < 1.0:
             raise ValueError("leading_edge_thickness_over_total_pitch must be finite and in [0, 1)")
@@ -496,10 +506,10 @@ class SupersonicRotorBlade:
             raise TypeError("calculate_boundary_layer must be a bool")
         if not values["calculate_boundary_layer"]:
             return
-        if values["iterate_passage_pitch_closure"] and (
+        if values["match_LE_and_TE_thickness"] and (
             values["iterate_outlet_metal_angle"] or values["match_real_outlet_mach"]):
             raise ValueError(
-                "iterate_passage_pitch_closure=True is incompatible with mixed-flow angle or Mach matching")
+                "match_LE_and_TE_thickness=True is incompatible with mixed-flow angle or Mach matching")
         if values["match_real_outlet_mach"]:
             if not values["iterate_outlet_metal_angle"]:
                 raise ValueError("match_real_outlet_mach=True requires iterate_outlet_metal_angle=True")
@@ -845,6 +855,26 @@ class SupersonicRotorBlade:
                                  leading_edge_thickness=leading_edge_thickness, sonic_radius=sonic_radius,
                                  chord=chord, chord_reynolds_number=chord_reynolds_number)
 
+    def _design_ideal_geometry(self, ideal_outlet_relative_flow_mach: float, outlet_metal_angle: float) -> BladeShape:
+        """Construct one inviscid trial without running boundary layers or aftermixing."""
+
+        ideal = design_ideal_geometry(real_inlet_relative_flow_mach=self.real_inlet_relative_flow_mach,
+            ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach,
+            lower_surface_relative_flow_mach=self.lower_surface_relative_flow_mach,
+            upper_surface_relative_flow_mach=self.upper_surface_relative_flow_mach,
+            real_inlet_relative_flow_angle=self.real_inlet_relative_flow_angle,
+            ideal_outlet_relative_flow_angle=outlet_metal_angle,
+            inlet_metal_angle=self.inlet_metal_angle,
+            outlet_metal_angle=outlet_metal_angle,
+            number_of_nodes=self.number_of_nodes,
+            gamma=self.gamma)
+        leading_edge_thickness = (self.leading_edge_thickness_over_total_pitch
+                                  / (1.0 - self.leading_edge_thickness_over_total_pitch)
+                                  * ideal.inlet_passage_pitch)
+        return replace(ideal, leading_edge_thickness=leading_edge_thickness,
+                       trailing_edge_thickness=(leading_edge_thickness
+                                                + ideal.inlet_passage_pitch - ideal.outlet_passage_pitch))
+
     def _evaluate(self, ideal_outlet_relative_flow_mach: float, outlet_metal_angle: float) -> _RotorEvaluation:
         """Evaluate one ideal relative outlet-flow Mach and metal-angle trial.
 
@@ -864,20 +894,8 @@ class SupersonicRotorBlade:
         if key in self._evaluation_cache:
             return self._evaluation_cache[key]
 
-        ideal = design_ideal_geometry(real_inlet_relative_flow_mach=self.real_inlet_relative_flow_mach,
-            ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach,
-            lower_surface_relative_flow_mach=self.lower_surface_relative_flow_mach,
-            upper_surface_relative_flow_mach=self.upper_surface_relative_flow_mach,
-            real_inlet_relative_flow_angle=self.real_inlet_relative_flow_angle,
-            ideal_outlet_relative_flow_angle=outlet_metal_angle,
-            inlet_metal_angle=self.inlet_metal_angle,
-            outlet_metal_angle=outlet_metal_angle,
-            number_of_nodes=self.number_of_nodes,
-            gamma=self.gamma)
-
-        leading_edge_thickness = (self.leading_edge_thickness_over_total_pitch
-                                  / (1.0 - self.leading_edge_thickness_over_total_pitch)
-                                  * ideal.inlet_passage_pitch)
+        ideal = self._design_ideal_geometry(ideal_outlet_relative_flow_mach, outlet_metal_angle)
+        leading_edge_thickness = ideal.leading_edge_thickness
         if not self.calculate_boundary_layer:
             result = _RotorEvaluation(ideal=ideal, corrected=None,
                 pressure_boundary_layer=None, suction_boundary_layer=None,
@@ -927,10 +945,9 @@ class SupersonicRotorBlade:
         trailing_edge_vertical_boundary_layer_height = \
             abs(corrected.pressure_surface.y[-1] - ideal.pressure_surface.y[-1]) \
             + abs(corrected.suction_surface.y[-1] - ideal.suction_surface.y[-1])
-        # In legacy pitch closure, NASA TM X-2434 carries the leading-edge thickness
-        # through to the trailing edge. Without closure, the two vertical BL
-        # offsets consume part of that metal thickness in the corrected plot.
-        if self.iterate_passage_pitch_closure:
+        # Thickness matching closes the corrected geometry's own inlet/outlet pitch.
+        # Otherwise retain the existing displacement-based aftermixing convention.
+        if self.match_LE_and_TE_thickness:
             trailing_edge_thickness = leading_edge_thickness
         else:
             trailing_edge_thickness = max(0.0, leading_edge_thickness - trailing_edge_vertical_boundary_layer_height)
@@ -990,104 +1007,80 @@ class SupersonicRotorBlade:
                                                * (pressure.x[0] - suction.x[0]))
         outlet_passage_pitch = pressure.y[-1] - (suction.y[-1] + math.tan(outlet_metal_angle_rad)
                                                  * (pressure.x[-1] - suction.x[-1]))
-        return BladeShape(pressure_surface=pressure,
+        return replace(ideal, pressure_surface=pressure,
                           suction_surface=suction,
                           chord=ideal.chord,
                           inlet_passage_pitch=float(inlet_passage_pitch),
                           outlet_passage_pitch=float(outlet_passage_pitch),
-                          max_flow_turning_increment=ideal.max_flow_turning_increment,
-                          coordinate_scale=ideal.coordinate_scale)
+                          trailing_edge_thickness=(ideal.leading_edge_thickness
+                                                   + inlet_passage_pitch - outlet_passage_pitch))
 
-    def _solve_outlet_metal_angle_for_passage_pitch_closure(self, *, initial_outlet_metal_angle: float,
-                                                            ideal_outlet_relative_flow_mach: float) -> float:
-        """Reproduce the NASA TM X-2434 ``BETAT`` passage-pitch-closure iteration.
+    def _solve_thickness_match(self, *, initial_mach: float, initial_angle: float,
+                               corrected: bool) -> tuple[float, float, BladeShape]:
+        """Close one shape's own passage pitch by varying either angle or Mach.
 
-        The first unbracketed update comes from the NASA TM X-2434 continuity
-        relation with outlet displacement blockage. Once trials exist on
-        both sides of equal passage pitch, SciPy's Brent scheme refines the angle.
-        NASA TM X-2434 uses a tolerance of 0.0001 dimensional length unit. This
-        API applies a tighter SI tolerance of 0.000001 m.
-
-        :param float initial_outlet_metal_angle: Initial outlet metal-angle estimate, degrees.
-        :param float ideal_outlet_relative_flow_mach: Ideal relative outlet Mach held during passage-pitch closure.
-        :return: Outlet metal angle giving equal corrected outlet and ideal inlet passage pitch.
-        :rtype: float
-        :raises DesignConvergenceError: If the NASA TM X-2434 iteration stagnates or leaves its physical range.
+        Equal inlet/outlet passage pitch makes the actual circumferential LE and TE
+        separations equal in both plots and CAD exports. Corrected and uncorrected
+        shapes are solved independently; only corrected trials run boundary layers.
         """
 
-        outlet_metal_angle = float(initial_outlet_metal_angle)
-        angle_above_target: float | None = None
-        angle_below_target: float | None = None
-        inlet_mass_flow = float(mass_flow_parameter(self.real_inlet_relative_flow_mach, self.gamma))
-        outlet_mass_flow = float(mass_flow_parameter(ideal_outlet_relative_flow_mach, self.gamma))
-        evaluation_count = 0
-        evaluation: _RotorEvaluation | None = None
-
-        def passage_pitch_residual(angle: float) -> float:
-            """Return corrected outlet passage pitch minus ideal inlet passage pitch for one angle trial."""
-
-            nonlocal evaluation_count, evaluation
-            self._validate_surface_mach_ranges(
-                ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach, outlet_metal_angle=angle)
-            evaluation = self._evaluate(ideal_outlet_relative_flow_mach, angle)
-            evaluation_count += 1
-            return evaluation.corrected.outlet_passage_pitch - evaluation.ideal.inlet_passage_pitch
-
-        # Use the NASA continuity update only to discover the second side of the physical pitch-closure bracket.
-        for _ in range(50):
-            residual = passage_pitch_residual(outlet_metal_angle)
-            dimensional_scale = self._dimensional_scale(evaluation.ideal)
-            passage_pitch_tolerance = 1.0e-6 * evaluation.ideal.chord / dimensional_scale.chord
-            if abs(residual) <= passage_pitch_tolerance:
-                self.passage_pitch_closure_iteration_count = evaluation_count
-                return outlet_metal_angle
-
-            if residual >= 0.0:
-                angle_above_target = outlet_metal_angle
-            else:
-                angle_below_target = outlet_metal_angle
-
-            if angle_above_target is not None and angle_below_target is not None:
-                break
-
-            # The continuity update uses the combined pressure- and suction-side exit blockage.
-            pressure_displacement = evaluation.pressure_boundary_layer.displacement_thickness_over_chord[-1]
-            suction_displacement = evaluation.suction_boundary_layer.displacement_thickness_over_chord[-1]
-            total_displacement = (pressure_displacement + suction_displacement) * evaluation.ideal.chord
-            cosine_argument = math.cos(math.radians(self.real_inlet_relative_flow_angle)) \
-                              * inlet_mass_flow / outlet_mass_flow \
-                              + total_displacement / evaluation.ideal.inlet_passage_pitch
-            if not -1.0 <= cosine_argument <= 1.0:
-                raise DesignConvergenceError(
-                    "legacy passage-pitch closure produced no physical outlet angle from the continuity update")
-            candidate = -math.degrees(math.acos(cosine_argument))
-
-            if not -90.0 < candidate < 0.0:
-                raise DesignConvergenceError(
-                    "legacy passage-pitch closure moved the outlet metal angle outside (-90, 0) degrees")
-            if abs(candidate - outlet_metal_angle) <= 1.0e-12:
-                raise DesignConvergenceError("legacy passage-pitch closure stagnated before equal passage pitch")
-            outlet_metal_angle = candidate
+        shape_name = "corrected" if corrected else "uncorrected"
+        if self.match_thickness_with_angle:
+            nu_out = prandtl_meyer_angle(initial_mach, self.gamma)
+            minimum_turning = max(nu_out - prandtl_meyer_angle(self.lower_surface_relative_flow_mach, self.gamma),
+                                  prandtl_meyer_angle(self.upper_surface_relative_flow_mach, self.gamma) - nu_out)
+            lower_bound = -90.0 + 1.0e-5
+            upper_bound = -max(math.degrees(minimum_turning), 1.0e-5)
+            initial = initial_angle
         else:
-            raise DesignConvergenceError(
-                "passage-pitch closure could not bracket equal passage pitch within 50 evaluations")
+            lower_bound = max(1.0 + 1.0e-5, self.lower_surface_relative_flow_mach)
+            upper_bound = self.upper_surface_relative_flow_mach
+            # Both outlet transition turning spans must fit inside the fixed metal angle.
+            nu_low = prandtl_meyer_angle(self.lower_surface_relative_flow_mach, self.gamma)
+            nu_up = prandtl_meyer_angle(self.upper_surface_relative_flow_mach, self.gamma)
+            turning = math.radians(abs(initial_angle))
+            if nu_up > turning:
+                lower_bound = max(lower_bound, mach_from_prandtl_meyer(nu_up - turning, self.gamma))
+            if nu_low + turning < nu_up:
+                upper_bound = min(upper_bound, mach_from_prandtl_meyer(nu_low + turning, self.gamma))
+            initial = initial_mach
+        if upper_bound <= lower_bound:
+            raise DesignConvergenceError(f"{shape_name} thickness matching has no feasible outlet interval")
 
-        lower_angle, upper_angle = sorted((angle_above_target, angle_below_target))
+        evaluation_count = 0
+        last_shape: BladeShape | None = None
+
+        def residual(values: np.ndarray) -> np.ndarray:
+            nonlocal evaluation_count, last_shape
+            variable = float(values[0])
+            mach = initial_mach if self.match_thickness_with_angle else variable
+            angle = variable if self.match_thickness_with_angle else initial_angle
+            self._validate_surface_mach_ranges(ideal_outlet_relative_flow_mach=mach, outlet_metal_angle=angle)
+            if corrected:
+                evaluation = self._evaluate(mach, angle)
+                ideal, last_shape = evaluation.ideal, evaluation.corrected
+            else:
+                ideal = last_shape = self._design_ideal_geometry(mach, angle)
+            evaluation_count += 1
+            scale = self._dimensional_scale(ideal).sonic_radius
+            # Scale by the independently checked dimensional pitch tolerance (1 micrometre).
+            return np.asarray([(last_shape.outlet_passage_pitch - last_shape.inlet_passage_pitch)
+                               * scale / 1.0e-6])
+
         try:
-            outlet_metal_angle = brentq(passage_pitch_residual, lower_angle, upper_angle, xtol=1.0e-12,
-                                        rtol=1.0e-14, maxiter=50)
-        except (RuntimeError, ValueError) as error:
-            raise DesignConvergenceError(
-                "passage-pitch closure did not converge within the physical angle bracket") from error
-
-        residual = passage_pitch_residual(outlet_metal_angle)
-        dimensional_scale = self._dimensional_scale(evaluation.ideal)
-        passage_pitch_tolerance = 1.0e-6 * evaluation.ideal.chord / dimensional_scale.chord
-        if abs(residual) > passage_pitch_tolerance:
-            raise DesignConvergenceError(
-                "passage-pitch closure angle converged without satisfying the dimensional pitch tolerance")
-        self.passage_pitch_closure_iteration_count = evaluation_count
-        return outlet_metal_angle
+            initial = float(np.clip(initial, lower_bound, upper_bound))
+            solution = least_squares(residual, [initial], bounds=([lower_bound], [upper_bound]),
+                                     diff_step=1.0e-4, xtol=1.0e-12, ftol=1.0e-12, gtol=1.0e-12,
+                                     max_nfev=80)
+            final_residual = float(residual(solution.x)[0])
+        except (GeometryError, BoundaryLayerError, DesignConvergenceError, ValueError, OverflowError) as error:
+            raise DesignConvergenceError(f"{shape_name} LE/TE thickness matching encountered an infeasible trial") from error
+        if not solution.success or abs(final_residual) > 1.0:
+            raise DesignConvergenceError(f"{shape_name} LE/TE thickness matching did not converge; "
+                                         f"final thickness difference was {final_residual * 1.0e-6:.6g} m")
+        mach = initial_mach if self.match_thickness_with_angle else float(solution.x[0])
+        angle = float(solution.x[0]) if self.match_thickness_with_angle else initial_angle
+        return mach, angle, replace(last_shape, thickness_matching_iteration_count=evaluation_count)
 
     def _flow_residual_for_outlet_metal_angle(self, outlet_metal_angle: float, *,
         ideal_outlet_relative_flow_mach: float) -> float:
@@ -1337,7 +1330,7 @@ class SupersonicRotorBlade:
         lower_x = shape.pressure_surface.x - shape.pressure_surface.x[0]
         lower_y = shape.pressure_surface.y - shape.pressure_surface.y[0]
         upper_x = shape.suction_surface.x + translation_x - shape.pressure_surface.x[0]
-        upper_y = (shape.suction_surface.y + translation_y + self.dimensional_leading_edge_thickness
+        upper_y = (shape.suction_surface.y + translation_y + shape.leading_edge_thickness
             - shape.pressure_surface.y[0])
 
         # Reverse the upper surface so consecutive points trace one profile.
@@ -1348,7 +1341,7 @@ class SupersonicRotorBlade:
         # exactly one point in the exported arrays has coordinates (0, 0).
         upper_x_reversed = upper_x[::-1]
         upper_y_reversed = upper_y[::-1]
-        if self.dimensional_leading_edge_thickness == 0.0:
+        if shape.leading_edge_thickness == 0.0:
             upper_x_reversed = upper_x_reversed[:-1]
             upper_y_reversed = upper_y_reversed[:-1]
         profile_x = np.concatenate((lower_x, upper_x_reversed))
@@ -1429,11 +1422,11 @@ class SupersonicRotorBlade:
             # the local plotting copy. This preserves the public physical
             # dimensions while presenting engineering drawings in millimetres.
             shape = dimensional_shape.scaled(1000.0, "dimensional [mm]")
-            leading_edge_thickness = 1000.0 * self.dimensional_leading_edge_thickness
+            leading_edge_thickness = shape.leading_edge_thickness
             axis_label = "length [mm]"
         else:
             shape = self.nondimensional_shapes.corrected if corrected else self.nondimensional_shapes.uncorrected
-            leading_edge_thickness = self.leading_edge_thickness
+            leading_edge_thickness = shape.leading_edge_thickness
             axis_label = r"coordinate / $r^*$"
 
         if ax is None:
@@ -1498,7 +1491,7 @@ class SupersonicRotorBlade:
                         color=color,
                         linewidth=linewidth)
 
-                # Close both trailing edges even when legacy pitch closure is
+                # Close both trailing edges even when thickness matching is
                 # disabled. This makes each plotted blade a complete profile;
                 # the connector spans the actual separation produced by the
                 # selected ideal or BL-corrected surface coordinates.
