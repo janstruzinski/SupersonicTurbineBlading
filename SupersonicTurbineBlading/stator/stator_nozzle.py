@@ -129,7 +129,8 @@ class SupersonicStatorNozzle:
     axisymmetric straight-wall (conical) de Laval nozzle sized with the
     perfect-gas area--Mach relation. Only the MOC route calculates boundary-layer
     displacement, corrected suction-side straight length, and aftermixing using NASA TM X-2343,
-    unless ``calculate_boundary_layer=False``.
+    unless ``calculate_boundary_layer=False``. Aftermixing can be independently disabled with
+    ``calculate_aftermixing=False`` while retaining BL correction.
     The conical route calculates ideal geometry and thermodynamic/scaling diagnostics;
     its corrected shapes, boundary-layer results, mixing results and real outlet states are ``None``.
     Construction is completed during initialization.
@@ -176,11 +177,15 @@ class SupersonicStatorNozzle:
         supersonic construction Mach and outlet metal angle until the selected
         aftermixing solution matches both ``requested_outlet_absolute_flow_mach`` and
         ``requested_outlet_absolute_flow_angle``. Requires ``iterate_outlet_metal_angle=True``.
-    :param bool calculate_boundary_layer: Calculate MOC BL correction and aftermixing; default ``True``.
+    :param bool calculate_boundary_layer: Calculate MOC BL correction; default ``True``.
         If false, store only uncorrected shapes. BL results, corrected exit diagnostics, mixing results and real
         outlet states are ``None``. Mixed-flow matching and a mixing-solution override are disabled with a warning
         if supplied.
-        Conical nozzles always disable BL calculation.
+        Disabling BL also disables aftermixing. Conical nozzles always disable BL calculation.
+    :param bool calculate_aftermixing: Calculate the MOC mixed-out outlet state after BL correction; default ``True``.
+        If false, retain BL results, corrected shapes and corrected exit diagnostics, but store mixing results and
+        real outlet states as ``None``. Mixed-flow matching and a mixing-solution override are disabled with a
+        warning if supplied. Requires BL calculation; always disabled for conical nozzles.
     :param BoundaryLayerMode | None boundary_layer_mode: MOC only: ``"fully_turbulent"`` or
         ``"laminar_then_turbulent"``; omission selects natural transition. Both start at the throat.
         For conical nozzles this must be ``None``. The converging subsonic contour is outside this class.
@@ -216,6 +221,7 @@ class SupersonicStatorNozzle:
         iterate_outlet_metal_angle: bool = False,
         match_real_outlet_absolute_flow_mach: bool = False,
         calculate_boundary_layer: bool = True,
+        calculate_aftermixing: bool = True,
         boundary_layer_mode: BoundaryLayerMode | None = None,
         initial_turbulent_displacement_thickness: float | None = None,
         initial_turbulent_momentum_thickness: float | None = None,
@@ -250,6 +256,7 @@ class SupersonicStatorNozzle:
             iterate_outlet_metal_angle=iterate_outlet_metal_angle,
             match_real_outlet_absolute_flow_mach=match_real_outlet_absolute_flow_mach,
             calculate_boundary_layer=calculate_boundary_layer,
+            calculate_aftermixing=calculate_aftermixing,
             boundary_layer_mode=boundary_layer_mode,
             initial_turbulent_displacement_thickness=initial_turbulent_displacement_thickness,
             initial_turbulent_momentum_thickness=initial_turbulent_momentum_thickness,
@@ -264,9 +271,10 @@ class SupersonicStatorNozzle:
         self.contour_method = contour_method
         self.half_cone_metal_angle = None if half_cone_metal_angle is None else float(half_cone_metal_angle)
         self.number_of_nodes = int(number_of_nodes)
-        self.iterate_outlet_metal_angle = iterate_outlet_metal_angle and calculate_boundary_layer
-        self.match_real_outlet_absolute_flow_mach = match_real_outlet_absolute_flow_mach and calculate_boundary_layer
         self.calculate_boundary_layer = calculate_boundary_layer and contour_method == "moc"
+        self.calculate_aftermixing = calculate_aftermixing and self.calculate_boundary_layer
+        self.iterate_outlet_metal_angle = iterate_outlet_metal_angle and self.calculate_aftermixing
+        self.match_real_outlet_absolute_flow_mach = match_real_outlet_absolute_flow_mach and self.calculate_aftermixing
         self.boundary_layer_mode = (
             ("laminar_then_turbulent" if boundary_layer_mode is None else boundary_layer_mode)
             if self.calculate_boundary_layer else None)
@@ -276,14 +284,16 @@ class SupersonicStatorNozzle:
         self.initial_turbulent_momentum_thickness = (None if not self.calculate_boundary_layer
                                                      or initial_turbulent_momentum_thickness is None
                                                      else float(initial_turbulent_momentum_thickness))
-        self._mixing_solution_override = mixing_solution if self.calculate_boundary_layer else None
-        if not calculate_boundary_layer:
+        self._mixing_solution_override = mixing_solution if self.calculate_aftermixing else None
+        if not self.calculate_aftermixing:
             disabled_options = [name for name, enabled in (
                 ("iterate_outlet_metal_angle", iterate_outlet_metal_angle),
                 ("match_real_outlet_absolute_flow_mach", match_real_outlet_absolute_flow_mach),
                 ("mixing_solution", mixing_solution is not None)) if enabled]
             if disabled_options:
-                warnings.warn("calculate_boundary_layer=False disables " + ", ".join(disabled_options),
+                reason = ("calculate_boundary_layer=False" if not calculate_boundary_layer
+                          else "calculate_aftermixing=False")
+                warnings.warn(reason + " disables " + ", ".join(disabled_options),
                               UserWarning, stacklevel=2)
 
         self.upstream_total_fluid_state = self.fluid.properties(self.upstream_total_temperature,
@@ -398,7 +408,8 @@ class SupersonicStatorNozzle:
         if (not math.isfinite(values["requested_outlet_absolute_flow_mach"]) or
                 values["requested_outlet_absolute_flow_mach"] <= 0.0):
             raise ValueError("requested_outlet_absolute_flow_mach must be positive and finite")
-        if ((not values["calculate_boundary_layer"] or not values["match_real_outlet_absolute_flow_mach"])
+        if ((not values["calculate_boundary_layer"] or not values["calculate_aftermixing"]
+             or not values["match_real_outlet_absolute_flow_mach"])
             and values["requested_outlet_absolute_flow_mach"] <= 1.0):
             raise ValueError("ideal pre-mixing requested_outlet_absolute_flow_mach must be supersonic (> 1)")
         if not (math.isfinite(values["requested_outlet_absolute_flow_angle"]) and
@@ -426,13 +437,16 @@ class SupersonicStatorNozzle:
             raise TypeError("match_real_outlet_absolute_flow_mach must be a bool")
         if not isinstance(values["calculate_boundary_layer"], bool):
             raise TypeError("calculate_boundary_layer must be a bool")
+        if not isinstance(values["calculate_aftermixing"], bool):
+            raise TypeError("calculate_aftermixing must be a bool")
         if not values["calculate_boundary_layer"]:
             return
-        if values["match_real_outlet_absolute_flow_mach"] and not values["iterate_outlet_metal_angle"]:
+        if (values["calculate_aftermixing"] and values["match_real_outlet_absolute_flow_mach"]
+            and not values["iterate_outlet_metal_angle"]):
             raise ValueError("match_real_outlet_absolute_flow_mach=True requires iterate_outlet_metal_angle=True")
         if values["boundary_layer_mode"] not in (None, "fully_turbulent", "laminar_then_turbulent"):
             raise ValueError("invalid boundary_layer_mode")
-        if values["mixing_solution"] not in (None, "subsonic"):
+        if values["calculate_aftermixing"] and values["mixing_solution"] not in (None, "subsonic"):
             raise ValueError("mixing_solution must be None or 'subsonic'")
 
         displacement = values["initial_turbulent_displacement_thickness"]
@@ -591,17 +605,19 @@ class SupersonicStatorNozzle:
             boundary_layer=suction_boundary_layer,
             outlet_metal_angle=outlet_metal_angle)
 
-        pressure_index = construction.pressure_point_count - 1
-        displacement = suction_boundary_layer.displacement_thickness_over_chord * ideal.chord
-        momentum = suction_boundary_layer.momentum_thickness_over_chord * ideal.chord
-        mixing = self._aftermixing(ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
-            ideal_outlet_absolute_flow_angle=ideal_outlet_absolute_flow_angle,
-            nozzle_passage_pitch=corrected.nozzle_passage_pitch,
-            trailing_edge_thickness=corrected.trailing_edge_thickness,
-            pressure_displacement=float(displacement[pressure_index]),
-            suction_displacement=corrected_exit.displacement,
-            pressure_momentum=float(momentum[pressure_index]),
-            suction_momentum=corrected_exit.momentum)
+        mixing = None
+        if self.calculate_aftermixing:
+            pressure_index = construction.pressure_point_count - 1
+            displacement = suction_boundary_layer.displacement_thickness_over_chord * ideal.chord
+            momentum = suction_boundary_layer.momentum_thickness_over_chord * ideal.chord
+            mixing = self._aftermixing(ideal_outlet_absolute_flow_mach=ideal_outlet_absolute_flow_mach,
+                ideal_outlet_absolute_flow_angle=ideal_outlet_absolute_flow_angle,
+                nozzle_passage_pitch=corrected.nozzle_passage_pitch,
+                trailing_edge_thickness=corrected.trailing_edge_thickness,
+                pressure_displacement=float(displacement[pressure_index]),
+                suction_displacement=corrected_exit.displacement,
+                pressure_momentum=float(momentum[pressure_index]),
+                suction_momentum=corrected_exit.momentum)
         evaluation = _StatorEvaluation(ideal_outlet_absolute_flow_mach=float(ideal_outlet_absolute_flow_mach),
             ideal_outlet_absolute_flow_angle=ideal_outlet_absolute_flow_angle,
             outlet_metal_angle=float(outlet_metal_angle),

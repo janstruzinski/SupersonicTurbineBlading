@@ -36,6 +36,7 @@ moc_stator = SupersonicStatorNozzle(requested_outlet_absolute_flow_mach=1.77,
     # angle until aftermixing reaches both requested absolute flow targets.
     match_real_outlet_absolute_flow_mach=False,
     calculate_boundary_layer=True,  # set False for uncorrected geometry only; BL dependent options are then disabled
+    calculate_aftermixing=True,  # set False to keep BL correction without calculating a mixed-out outlet state
     # This example starts a known turbulent layer at the throat.  In
     # laminar_then_turbulent mode both thickness inputs must be omitted.
     boundary_layer_mode="fully_turbulent",  # default: laminar then turbulent

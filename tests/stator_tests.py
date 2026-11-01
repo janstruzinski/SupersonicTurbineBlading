@@ -236,7 +236,9 @@ def test_stores_corrected_uncorrected_and_dimensional_shapes():
 
 
 @pytest.mark.parametrize("calculate_boundary_layer", [True, False])
-def test_conical_contour_is_inviscid_and_skips_bl_correction_and_mixing(monkeypatch, calculate_boundary_layer):
+@pytest.mark.parametrize("calculate_aftermixing", [True, False])
+def test_conical_contour_is_inviscid_and_skips_bl_correction_and_mixing(monkeypatch, calculate_boundary_layer,
+                                                                    calculate_aftermixing):
     def unexpected_call(*args, **kwargs):
         pytest.fail("an inviscid conical nozzle must not call BL, shape correction, or aftermixing")
 
@@ -247,6 +249,7 @@ def test_conical_contour_is_inviscid_and_skips_bl_correction_and_mixing(monkeypa
     stator = make_stator(
         contour_method="conical",
         calculate_boundary_layer=calculate_boundary_layer,
+        calculate_aftermixing=calculate_aftermixing,
     )
     expected_area_ratio = float(isentropic_area_ratio(stator.ideal_outlet_absolute_flow_mach, stator.gamma))
     nondimensional_uncorrected = stator.nondimensional_shapes.uncorrected
@@ -254,6 +257,7 @@ def test_conical_contour_is_inviscid_and_skips_bl_correction_and_mixing(monkeypa
 
     assert stator.contour_method == "conical"
     assert stator.calculate_boundary_layer is False
+    assert stator.calculate_aftermixing is False
     assert stator.actual_flow_turning_increment is None
     assert math.isclose(stator.nondimensional_ideal_exit_area_ratio, expected_area_ratio, rel_tol=1.0e-13)
     assert math.isclose(
@@ -308,6 +312,7 @@ def test_moc_default_still_calculates_boundary_layer_correction_and_mixing():
                          initial_turbulent_displacement_thickness=None,
                          initial_turbulent_momentum_thickness=None)
     assert stator.calculate_boundary_layer is True
+    assert stator.calculate_aftermixing is True
     assert stator.boundary_layer_mode == "laminar_then_turbulent"
     assert stator.pressure_boundary_layer is not None
     assert stator.suction_boundary_layer is not None
@@ -332,6 +337,7 @@ def test_moc_without_boundary_layer_keeps_only_ideal_geometry(monkeypatch):
                          initial_turbulent_displacement_thickness=None, initial_turbulent_momentum_thickness=None)
 
     assert stator.calculate_boundary_layer is False
+    assert stator.calculate_aftermixing is False
     assert stator.contour_method == "moc"
     for name in ("boundary_layer_mode", "initial_turbulent_displacement_thickness",
                  "initial_turbulent_momentum_thickness", "pressure_boundary_layer", "suction_boundary_layer",
@@ -361,39 +367,94 @@ def test_moc_without_boundary_layer_keeps_only_ideal_geometry(monkeypatch):
         plt.close(figure)
 
 
+def test_moc_without_aftermixing_preserves_boundary_layers_and_corrected_geometry(monkeypatch):
+    import matplotlib.pyplot as plt
+
+    reference = make_stator()
+
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("disabled aftermixing must skip mixing calculations and solution selection")
+
+    monkeypatch.setattr(SupersonicStatorNozzle, "_aftermixing", unexpected_call)
+    monkeypatch.setattr(SupersonicStatorNozzle, "_select_mixing_result", unexpected_call)
+    stator = make_stator(calculate_aftermixing=False)
+
+    assert stator.calculate_boundary_layer is True
+    assert stator.calculate_aftermixing is False
+    for name in ("mixing_results", "mixing_solution", "real_outlet_absolute_flow_angle",
+                 "real_outlet_absolute_flow_mach", "supersonic_mixing_available"):
+        assert getattr(stator, name) is None
+    for name in ("pressure_boundary_layer", "suction_boundary_layer"):
+        result = getattr(stator, name)
+        expected = getattr(reference, name)
+        np.testing.assert_array_equal(result.displacement_thickness_over_chord,
+                                      expected.displacement_thickness_over_chord)
+        np.testing.assert_array_equal(result.momentum_thickness_over_chord,
+                                      expected.momentum_thickness_over_chord)
+    for shapes in ("nondimensional_shapes", "dimensional_shapes"):
+        for surface in ("pressure_surface", "suction_surface"):
+            result = getattr(getattr(stator, shapes).corrected, surface)
+            expected = getattr(getattr(reference, shapes).corrected, surface)
+            np.testing.assert_array_equal(result.x, expected.x)
+            np.testing.assert_array_equal(result.y, expected.y)
+    for name in ("nondimensional_corrected_exit_area_ratio", "dimensional_corrected_exit_displacement_thickness",
+                 "dimensional_corrected_exit_momentum_thickness", "dimensional_chord", "dimensional_total_pitch",
+                 "ideal_outlet_absolute_axial_flow_mach"):
+        assert getattr(stator, name) == getattr(reference, name)
+    figure, axes = stator.plot(show=False)
+    assert "BL corrected" in axes.get_legend_handles_labels()[1]
+    plt.close(figure)
+
+
+@pytest.mark.parametrize("disabled_setting", ["calculate_boundary_layer", "calculate_aftermixing"])
 @pytest.mark.parametrize("options", [
     {"iterate_outlet_metal_angle": True},
     {"match_real_outlet_absolute_flow_mach": True},
     {"mixing_solution": "subsonic"},
+    {"mixing_solution": "invalid"},
     {"iterate_outlet_metal_angle": True, "match_real_outlet_absolute_flow_mach": True,
      "mixing_solution": "subsonic"},
 ])
-def test_stator_without_boundary_layer_overrides_dependent_controls_with_warning(monkeypatch, options):
+def test_stator_disabled_calculations_override_dependent_controls_with_warning(monkeypatch, disabled_setting, options):
     def unexpected_call(*args, **kwargs):
-        pytest.fail("disabled BL controls must never run outlet iterations")
+        pytest.fail("disabled mixed-flow controls must never run outlet iterations")
 
     for name in ("_solve_outlet_metal_angle_for_target_flow", "_solve_outlet_metal_angle_and_flow_mach_targets"):
         monkeypatch.setattr(SupersonicStatorNozzle, name, unexpected_call)
-    with pytest.warns(UserWarning, match="calculate_boundary_layer=False disables") as captured:
-        stator = make_stator(calculate_boundary_layer=False, **options)
+    with pytest.warns(UserWarning, match=f"{disabled_setting}=False disables") as captured:
+        stator = make_stator(**{disabled_setting: False}, **options)
     assert len(captured) == 1
     for name in options:
         assert name in str(captured[0].message)
     assert stator.iterate_outlet_metal_angle is False
     assert stator.match_real_outlet_absolute_flow_mach is False
     assert stator.mixing_solution is None
+    assert stator._mixing_solution_override is None
+    assert stator.calculate_aftermixing is False
+    assert stator.calculate_boundary_layer is (disabled_setting != "calculate_boundary_layer")
     assert stator.outlet_metal_angle == stator.requested_outlet_absolute_flow_angle
 
 
+@pytest.mark.parametrize("setting", ["calculate_boundary_layer", "calculate_aftermixing"])
 @pytest.mark.parametrize("value", [None, 0, "False"])
-def test_stator_requires_boolean_boundary_layer_setting(value):
-    with pytest.raises(TypeError, match="calculate_boundary_layer must be a bool"):
-        make_stator(calculate_boundary_layer=value)
+def test_stator_requires_boolean_calculation_settings(setting, value):
+    with pytest.raises(TypeError, match=f"{setting} must be a bool"):
+        make_stator(**{setting: value})
 
 
-def test_stator_without_boundary_layer_requires_supersonic_ideal_mach():
+@pytest.mark.parametrize("options, message", [
+    ({"boundary_layer_mode": "invalid"}, "invalid boundary_layer_mode"),
+    ({"initial_turbulent_momentum_thickness": None}, "fully_turbulent mode requires"),
+])
+def test_stator_without_aftermixing_still_validates_boundary_layer_inputs(options, message):
+    with pytest.raises(ValueError, match=message):
+        make_stator(calculate_aftermixing=False, **options)
+
+
+@pytest.mark.parametrize("disabled_setting", ["calculate_boundary_layer", "calculate_aftermixing"])
+def test_stator_without_mixing_requires_supersonic_ideal_mach(disabled_setting):
     with pytest.raises(ValueError, match="must be supersonic"):
-        make_stator(calculate_boundary_layer=False, requested_outlet_absolute_flow_mach=0.9,
+        make_stator(**{disabled_setting: False}, requested_outlet_absolute_flow_mach=0.9,
                     match_real_outlet_absolute_flow_mach=True)
 
 

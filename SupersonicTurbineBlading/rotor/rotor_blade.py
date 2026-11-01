@@ -47,7 +47,8 @@ class _RotorEvaluation:
     """Geometry, fixed-node BL marches, and MOC-station design results.
 
     This private record keeps every quantity produced by one angle/Mach trial
-    together. BL-dependent fields are ``None`` when BL calculation is disabled.
+    together. BL-dependent fields are ``None`` when BL calculation is disabled;
+    ``mixing`` is also ``None`` when aftermixing alone is disabled.
     It is cached because an outlet solve often evaluates the same trial more than once.
 
     :ivar BladeShape ideal: Inviscid MOC blade passage.
@@ -140,12 +141,16 @@ class SupersonicRotorBlade:
         A positive ratio with supersonic axial inflow emits a warning because
         NACA RM L52B06 derives this construction for subsonic axial inflow.
     :param bool calculate_starting: Run the NASA TN D-4421 starting feasibility test.
-    :param bool calculate_boundary_layer: Calculate BL correction and aftermixing; default ``True``.
+    :param bool calculate_boundary_layer: Calculate BL correction; default ``True``.
         If false, store only uncorrected shapes. BL results, corrected CAD profiles, corrected pitch residuals,
         scalar trailing-edge thickness diagnostics and real outlet states are ``None``. Mixed-flow matching
         and a mixing-solution override are disabled with a warning if supplied. Thickness matching
         still applies to the uncorrected shape. The independent inlet-entry correction and optional starting check
-         still apply.
+        still apply. Disabling BL also disables aftermixing.
+    :param bool calculate_aftermixing: Calculate the mixed-out outlet state after BL correction; default ``True``.
+        If false, retain BL results, corrected shapes and thickness diagnostics, but store mixing results and
+        real outlet states as ``None``. Mixed-flow matching and a mixing-solution override are disabled with
+        a warning if supplied. Thickness matching remains available. Requires BL calculation.
     :param BoundaryLayerMode boundary_layer_mode: ``"fully_turbulent"`` or
         ``"laminar_then_turbulent"``; both start at the rotor inlet. Ignored along with initial thicknesses
         when ``calculate_boundary_layer=False``.
@@ -198,6 +203,7 @@ class SupersonicRotorBlade:
         use_leading_edge_entry_correction: bool = True,
         calculate_starting: bool = True,
         calculate_boundary_layer: bool = True,
+        calculate_aftermixing: bool = True,
         boundary_layer_mode: BoundaryLayerMode = "laminar_then_turbulent",
         initial_turbulent_displacement_thickness: float | None = None,
         initial_turbulent_momentum_thickness: float | None = None,
@@ -206,7 +212,7 @@ class SupersonicRotorBlade:
 
         The constructor arguments and their units are documented on
         :class:`SupersonicRotorBlade`. Construction performs the velocity
-        triangles, MOC geometry, BL marches, optional iterations, aftermixing,
+        triangles, MOC geometry, BL marches, optional iterations and aftermixing,
         and optional starting check so the result attributes are immediately
         available to an engineering script.
 
@@ -239,6 +245,7 @@ class SupersonicRotorBlade:
             leading_edge_thickness_over_total_pitch=leading_edge_thickness_over_total_pitch,
             use_leading_edge_entry_correction=use_leading_edge_entry_correction,
             calculate_boundary_layer=calculate_boundary_layer,
+            calculate_aftermixing=calculate_aftermixing,
             boundary_layer_mode=boundary_layer_mode,
             initial_turbulent_displacement_thickness=initial_turbulent_displacement_thickness,
             initial_turbulent_momentum_thickness=initial_turbulent_momentum_thickness,
@@ -296,13 +303,14 @@ class SupersonicRotorBlade:
         self.passage_inlet_speed_of_sound = math.sqrt(self.gamma * self.fluid.specific_gas_constant
                                                       * self.passage_inlet_static_temperature)
         self.number_of_nodes = int(number_of_nodes)
-        self.iterate_outlet_metal_angle = iterate_outlet_metal_angle and calculate_boundary_layer
-        self.match_real_outlet_mach = match_real_outlet_mach and calculate_boundary_layer
+        self.calculate_boundary_layer = calculate_boundary_layer
+        self.calculate_aftermixing = calculate_aftermixing and self.calculate_boundary_layer
+        self.iterate_outlet_metal_angle = iterate_outlet_metal_angle and self.calculate_aftermixing
+        self.match_real_outlet_mach = match_real_outlet_mach and self.calculate_aftermixing
         self.match_LE_and_TE_thickness = match_LE_and_TE_thickness
         self.match_thickness_with_angle = match_thickness_with_angle
         self.match_thickness_with_mach = match_thickness_with_mach
         self.calculate_starting = bool(calculate_starting)
-        self.calculate_boundary_layer = calculate_boundary_layer
         self.boundary_layer_mode = boundary_layer_mode if calculate_boundary_layer else None
         self.initial_turbulent_displacement_thickness = (None if not calculate_boundary_layer
                                                          or initial_turbulent_displacement_thickness is None
@@ -310,14 +318,16 @@ class SupersonicRotorBlade:
         self.initial_turbulent_momentum_thickness = (None if not calculate_boundary_layer
                                                      or initial_turbulent_momentum_thickness is None
                                                      else float(initial_turbulent_momentum_thickness))
-        self._mixing_solution_override = mixing_solution if calculate_boundary_layer else None
-        if not calculate_boundary_layer:
+        self._mixing_solution_override = mixing_solution if self.calculate_aftermixing else None
+        if not self.calculate_aftermixing:
             disabled_options = [name for name, enabled in (
                 ("iterate_outlet_metal_angle", iterate_outlet_metal_angle),
                 ("match_real_outlet_mach", match_real_outlet_mach),
                 ("mixing_solution", mixing_solution is not None)) if enabled]
             if disabled_options:
-                warnings.warn("calculate_boundary_layer=False disables " + ", ".join(disabled_options),
+                reason = ("calculate_boundary_layer=False" if not calculate_boundary_layer
+                          else "calculate_aftermixing=False")
+                warnings.warn(reason + " disables " + ", ".join(disabled_options),
                               UserWarning, stacklevel=2)
         self._evaluation_cache: dict[tuple[float, float], _RotorEvaluation] = {}
         self.dimensional_shapes: DimensionalBladeShapes | None = None
@@ -504,18 +514,23 @@ class SupersonicRotorBlade:
             raise TypeError("use_leading_edge_entry_correction must be a bool")
         if not isinstance(values["calculate_boundary_layer"], bool):
             raise TypeError("calculate_boundary_layer must be a bool")
+        if not isinstance(values["calculate_aftermixing"], bool):
+            raise TypeError("calculate_aftermixing must be a bool")
         if not values["calculate_boundary_layer"]:
             return
-        if values["match_LE_and_TE_thickness"] and (
-            values["iterate_outlet_metal_angle"] or values["match_real_outlet_mach"]):
-            raise ValueError(
-                "match_LE_and_TE_thickness=True is incompatible with mixed-flow angle or Mach matching")
-        if values["match_real_outlet_mach"]:
-            if not values["iterate_outlet_metal_angle"]:
-                raise ValueError("match_real_outlet_mach=True requires iterate_outlet_metal_angle=True")
-            if values["requested_outlet_relative_flow_mach"] is None:
+        if values["calculate_aftermixing"]:
+            if values["match_LE_and_TE_thickness"] and (
+                values["iterate_outlet_metal_angle"] or values["match_real_outlet_mach"]):
                 raise ValueError(
-                    "match_real_outlet_mach=True requires a requested_outlet_relative_flow_mach target")
+                    "match_LE_and_TE_thickness=True is incompatible with mixed-flow angle or Mach matching")
+            if values["match_real_outlet_mach"]:
+                if not values["iterate_outlet_metal_angle"]:
+                    raise ValueError("match_real_outlet_mach=True requires iterate_outlet_metal_angle=True")
+                if values["requested_outlet_relative_flow_mach"] is None:
+                    raise ValueError(
+                        "match_real_outlet_mach=True requires a requested_outlet_relative_flow_mach target")
+            if values["mixing_solution"] not in (None, "subsonic"):
+                raise ValueError("mixing_solution must be None or 'subsonic'")
         if values["boundary_layer_mode"] not in ("fully_turbulent", "laminar_then_turbulent"):
             raise ValueError("invalid boundary_layer_mode")
 
@@ -533,9 +548,6 @@ class SupersonicRotorBlade:
                 raise ValueError("initial turbulent displacement thickness must exceed initial momentum thickness")
         elif initial_displacement is not None or initial_momentum is not None:
             raise ValueError("initial turbulent thicknesses are only used with boundary_layer_mode='fully_turbulent'")
-
-        if values["mixing_solution"] not in (None, "subsonic"):
-            raise ValueError("mixing_solution must be None or 'subsonic'")
 
     def _select_mixing_result(self, mixing: dict[str, dict[str, float | bool]]) \
             -> tuple[MixingSolution, dict[str, float | bool]]:
@@ -952,13 +964,15 @@ class SupersonicRotorBlade:
         else:
             trailing_edge_thickness = max(0.0, leading_edge_thickness - trailing_edge_vertical_boundary_layer_height)
         passage_pitch_residual = corrected.outlet_passage_pitch - corrected.inlet_passage_pitch
-        mixing = self._aftermixing(ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach,
-            ideal_outlet_relative_flow_angle=outlet_metal_angle,
-            ideal=ideal,
-            corrected=corrected,
-            pressure_bl=pressure_bl,
-            suction_bl=suction_bl,
-            trailing_edge_thickness=trailing_edge_thickness)
+        mixing = None
+        if self.calculate_aftermixing:
+            mixing = self._aftermixing(ideal_outlet_relative_flow_mach=ideal_outlet_relative_flow_mach,
+                ideal_outlet_relative_flow_angle=outlet_metal_angle,
+                ideal=ideal,
+                corrected=corrected,
+                pressure_bl=pressure_bl,
+                suction_bl=suction_bl,
+                trailing_edge_thickness=trailing_edge_thickness)
         result = _RotorEvaluation(ideal=ideal, corrected=corrected,
             pressure_boundary_layer=pressure_bl,
             suction_boundary_layer=suction_bl,

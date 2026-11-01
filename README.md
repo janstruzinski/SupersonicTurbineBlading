@@ -337,7 +337,8 @@ arcs. The most important optional inputs used above are:
 | `leading_edge_thickness_over_total_pitch` | Ratio $t_{\mathrm{LE}}/G^{\ast}_{\mathrm{total}}$; default zero. |
 | `use_leading_edge_entry_correction` | Corrects inlet Mach and flow angle for finite thickness; default `True`. |
 | `calculate_starting` | Runs the NASA TN D-4421 supersonic-starting feasibility calculation; default `True`.          |
-| `calculate_boundary_layer` | Calculates BL correction and aftermixing; default `True`. Set `False` for ideal geometry only. |
+| `calculate_boundary_layer` | Calculates BL correction; default `True`. Set `False` for ideal geometry only, also disabling aftermixing. |
+| `calculate_aftermixing` | Calculates the mixed-out outlet state; default `True`. Set `False` to retain BL correction without aftermixing. |
 | `match_LE_and_TE_thickness` | Independently match LE and TE thickness for each shape; default `False`. |
 | `match_thickness_with_angle` | Vary outlet metal angle at fixed ideal outlet Mach; default `True`. |
 | `match_thickness_with_mach` | Vary ideal outlet Mach at fixed metal angle; default `False`. |
@@ -660,6 +661,7 @@ The conical route has no corrected shape or real aftermixed outlet state. `nondi
 `mixing_solution`, `real_outlet_absolute_flow_mach`, `real_outlet_absolute_flow_angle`,
 `supersonic_mixing_available`, `nondimensional_corrected_exit_area_ratio`, and both
 `dimensional_corrected_exit_*_thickness` properties are `None`. Its plot displays only the ideal contour.
+Both `calculate_boundary_layer` and `calculate_aftermixing` are stored as `False` for conical nozzles.
 Omit `boundary_layer_mode`, initial turbulent thicknesses and `mixing_solution`, and leave both mixed-flow iteration
 flags false; explicitly requesting these MOC-only calculations for a conical nozzle raises `ValueError`.
 
@@ -830,7 +832,8 @@ Additional nozzle design features of `stator_nozzle.py` are documented below.
 
 Both `SupersonicRotorBlade` and `SupersonicStatorNozzle` accept `calculate_boundary_layer=False`.
 The default is `True`; conical stator nozzles always skip BL calculations.
-Disabling this setting skips the BL solver, displacement correction and aftermixing. The uncorrected geometry
+Disabling this setting also sets `calculate_aftermixing=False` and skips the BL solver, displacement correction
+and aftermixing. The uncorrected geometry
 and its dimensional scale are calculated as usual, while both shape containers' `corrected` fields,
 `pressure_boundary_layer`, `suction_boundary_layer`, `mixing_results`, `mixing_solution` and real outlet
 states are `None`.
@@ -957,6 +960,8 @@ Stator controls and outputs are:
 | Input or property | Meaning                                                      |
 |---|--------------------------------------------------------------|
 | `number_of_nodes` | Nodes on each divergent and straight-wall segment; default 101. |
+| `calculate_boundary_layer` | Calculate MOC BL correction; default `True`. Set `False` for ideal geometry only. |
+| `calculate_aftermixing` | Calculate the MOC mixed-out outlet state; default `True`. Set `False` for BL correction only. |
 | `boundary_layer_mode` | Natural-transition or fully turbulent BL.                    |
 | `initial_turbulent_displacement_thickness` | Input throat $\delta^{\ast}$ in fully turbulent mode, in metres.  |
 | `initial_turbulent_momentum_thickness` | Input throat $\theta$ in fully turbulent mode, in metres. |
@@ -1016,6 +1021,30 @@ Rotor controls and outputs are:
 passage. `blade_profile_x_CAD` and `blade_profile_y_CAD` contain the corrected single-blade outline in millimetres.
 
 ### Aftermixing
+
+Both `SupersonicRotorBlade` and the MOC `SupersonicStatorNozzle` accept `calculate_aftermixing=True` by default.
+For BL calculation and corrected geometry without aftermixing, pass these options to either constructor:
+
+```python
+calculate_boundary_layer=True,
+calculate_aftermixing=False,
+```
+
+In this mode, the BL solver, displacement correction, dimensional corrected shapes and geometry diagnostics remain
+available. Rotor corrected CAD profiles, corrected pitch residuals and LE/TE thickness matching also remain available;
+stator corrected exit area and thickness diagnostics remain available. `mixing_results`, `mixing_solution`,
+`supersonic_mixing_available` and the real aftermixed outlet Mach/angle properties are `None`, including the rotor's
+`real_outlet_relative_axial_flow_mach`. Ideal outlet quantities, including axial Mach, are still calculated. The rotor
+flow-state table omits aftermixed outlet rows.
+
+Disabling aftermixing automatically sets `iterate_outlet_metal_angle`, rotor `match_real_outlet_mach` and stator
+`match_real_outlet_absolute_flow_mach` to `False`, and clears a supplied `mixing_solution` override. One `UserWarning`
+lists any overridden options. BL mode and initial thickness inputs are still validated and used. With mixed-flow
+matching disabled, the requested outlet Mach and angle specify the ideal state unless rotor thickness matching is
+enabled. The ideal outlet Mach must exceed one.
+
+Aftermixing requires BL calculation: `calculate_boundary_layer=False` also sets the stored `calculate_aftermixing`
+attribute to `False`, even if the latter argument is `True`. Conical nozzles always disable both calculations.
 
 The `AFMIX` models in NASA TM X-2434 and NASA TM X-2343 replace the nonuniform boundary-layer wakes and finite
 trailing-edge blockage by a uniform downstream state. They apply continuity, axial momentum, tangential momentum and

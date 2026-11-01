@@ -31,6 +31,7 @@ blade = SupersonicRotorBlade(ideal_inlet_relative_flow_mach=1.8,  # ideal rotor-
     use_leading_edge_entry_correction=True,
     calculate_starting=False,  # default: True
     calculate_boundary_layer=True,  # set False for uncorrected geometry only; BL dependent options are then disabled
+    calculate_aftermixing=True,  # set False to keep BL correction without calculating a mixed-out outlet state
     # Boundary layer calculations are "laminar_then_turbulent", with no initial thickness inputs
     boundary_layer_mode="laminar_then_turbulent",
     # Independently match LE/TE thickness for each shape, using exactly one method.
