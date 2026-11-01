@@ -55,20 +55,25 @@ def _polyfit(coefficients: np.ndarray, x: float, y: float = 0.0) -> float:
 
 
 def _transition_incompressible_form_factor(laminar_incompressible_form_factor: float,
-                                           transition_reynolds_number: float) -> float:
+                                           transition_reynolds_number: float, *,
+                                           transition_model: Literal["rotor", "stator"]) -> float:
     """Convert the laminar form factor to the turbulent starting value.
 
     ``RTRAN`` is the transition momentum-thickness Reynolds number from the
-    laminar calculation.  The legacy code substitutes 1000 when transition
-    is triggered by imminent laminar separation and no positive ``RTRAN``
-    has been calculated.
+    laminar calculation. For nonpositive ``RTRAN``, NASA TM X-2434, printed
+    p. 40, sets the rotor starting value to 1.4. NASA TM X-2343, printed
+    p. 39, substitutes ``RTRAN=1000`` in the correlation for the stator.
+    Both use the same correlation when a positive ``RTRAN`` is available.
 
     :param float laminar_incompressible_form_factor: Transformed laminar form factor at transition, -.
     :param float transition_reynolds_number: Momentum-thickness Reynolds number at transition, -.
+    :param str transition_model: NASA rotor or stator transition procedure.
     :return: Turbulent transformed form factor used to initialize the Sasman--Cresci march, -.
     :rtype: float
     """
 
+    if transition_reynolds_number <= 0.0 and transition_model == "rotor":
+        return 1.4
     rtran = float(transition_reynolds_number) if transition_reynolds_number > 0.0 else 1000.0
     log_rtran = math.log(rtran)
     return float(laminar_incompressible_form_factor) - 0.59389 - 0.06591 * log_rtran + 0.001272 * log_rtran**2
@@ -412,9 +417,11 @@ def _laminar_solution(state: dict[str, np.ndarray | float], correlation_limit: f
             kbar = float(integral / (x2 - x1))
             difference = 44000.0 * kbar + 700.0 if kbar > 0.03 else _polyfit(c_diff, kbar)
             r_transition = r_instability + difference
+            # The FORTRAN retains the last computed RTRAN even when natural
+            # transition has not yet occurred. A later separation uses it.
+            transition_reynolds_number = float(r_transition)
             if re_theta_i[index] >= r_transition:
                 transition_index = index
-                transition_reynolds_number = float(r_transition)
                 break
 
     return {"theta": theta,
@@ -436,8 +443,11 @@ def _turbulent_solution(state: dict[str, np.ndarray | float], start_index: int, 
     :param float initial_incompressible_form: Transformed incompressible form factor at ``start_index``, -.
     :return: Turbulent momentum/displacement thickness, form factor, and optional separation index.
     :rtype: dict
-    :raises BoundaryLayerError: If the turbulent integral equations diverge.
+    :raises BoundaryLayerError: If the initial state is already separated or the turbulent integral equations diverge.
     """
+
+    if initial_incompressible_form >= 2.8:
+        raise BoundaryLayerError("initial turbulent state is already separated")
 
     s = state["s"]
     edge_flow_mach = state["edge_flow_mach"]
@@ -511,22 +521,28 @@ def _turbulent_solution(state: dict[str, np.ndarray | float], start_index: int, 
 
     # Retain the NASA maximum step while SciPy's adaptive RK45 controls the local integration error and separation.
     evaluation_locations = np.asarray(s[start_index:])
-    solution = solve_ivp(derivative, (float(s[start_index]), float(s[-1])), initial_state,
-                         t_eval=evaluation_locations, events=separation_event, max_step=step_nominal,
-                         rtol=1.0e-10, atol=1.0e-12)
-    if not solution.success or not np.all(np.isfinite(solution.y)) or np.any(solution.y[0] <= 0.0):
-        raise BoundaryLayerError("turbulent integral equations diverged")
+    if len(evaluation_locations) == 1:
+        # Transition at the final station still initializes the turbulent BL,
+        # but has no remaining interval for solve_ivp to evaluate.
+        turbulent_values = initial_state[:, np.newaxis]
+    else:
+        solution = solve_ivp(derivative, (float(s[start_index]), float(s[-1])), initial_state,
+                             t_eval=evaluation_locations, events=separation_event, max_step=step_nominal,
+                             rtol=1.0e-10, atol=1.0e-12)
+        if not solution.success or not np.all(np.isfinite(solution.y)) or np.any(solution.y[0] <= 0.0):
+            raise BoundaryLayerError("turbulent integral equations diverged")
+        turbulent_values = solution.y
 
     theta = np.full(len(s), np.nan)
     displacement = np.full(len(s), np.nan)
     form = np.full(len(s), np.nan)
-    turbulent_count = len(solution.t)
+    turbulent_count = turbulent_values.shape[1]
     turbulent_slice = slice(start_index, start_index + turbulent_count)
-    theta_transformed = (nu_total * np.maximum(solution.y[0], 1.0e-15) ** 0.7886
+    theta_transformed = (nu_total * np.maximum(turbulent_values[0], 1.0e-15) ** 0.7886
                          / edge_flow_mach[turbulent_slice])
     theta[turbulent_slice] = theta_transformed * temperature[turbulent_slice] ** (-gp / (2.0 * gm))
     temperature_factor = 1.0 / temperature[turbulent_slice]
-    form[turbulent_slice] = (solution.y[1] * temperature_factor
+    form[turbulent_slice] = (turbulent_values[1] * temperature_factor
                              + pr ** (1.0 / 3.0) * (temperature_factor - 1.0))
     displacement[turbulent_slice] = theta[turbulent_slice] * form[turbulent_slice]
     if turbulent_count < len(evaluation_locations):
@@ -550,7 +566,8 @@ def solve_boundary_layer(*, surface: SurfaceCoordinates, chord: float, inlet_edg
                          inlet_total_pressure: float, mode: BoundaryLayerMode,
                          initial_turbulent_displacement_thickness_over_chord: float | None,
                          initial_turbulent_momentum_thickness_over_chord: float | None,
-                         laminar_correlation_limit: float) -> BoundaryLayerResult:
+                         laminar_correlation_limit: float,
+                         transition_model: Literal["rotor", "stator"] = "stator") -> BoundaryLayerResult:
     """Solve from a blade/nozzle reference station along one ideal surface.
 
     :param SurfaceCoordinates surface: Ideal surface coordinates and Mach.
@@ -571,14 +588,18 @@ def solve_boundary_layer(*, surface: SurfaceCoordinates, chord: float, inlet_edg
     :param float laminar_correlation_limit: Maximum generated laminar
         ``CORLN`` value before subsequent surface stations use table
         extrapolation. NASA TM X-2434 uses 0.50 for the rotor, while NASA TM X-2343 uses 0.16 for the stator.
+    :param str transition_model: NASA rotor or stator transition initialization. The row designers pass
+        their own model explicitly. Direct solver calls default to the legacy stator initialization.
     :return: Boundary-layer integral quantities normalized by chord.
     :rtype: BoundaryLayerResult
-    :raises ValueError: If mode, correlation limit, or fully turbulent inlet thicknesses are invalid.
+    :raises ValueError: If mode, transition model, correlation limit, or fully turbulent inlet thicknesses are invalid.
     :raises BoundaryLayerError: If transformed inlet values are unphysical or either integral solution fails.
     """
 
     if mode not in ("fully_turbulent", "laminar_then_turbulent"):
         raise ValueError("boundary_layer_mode must be 'fully_turbulent' or 'laminar_then_turbulent'")
+    if transition_model not in ("rotor", "stator"):
+        raise ValueError("transition_model must be 'rotor' or 'stator'")
     if not math.isfinite(laminar_correlation_limit) or laminar_correlation_limit <= 0.0:
         raise ValueError("laminar_correlation_limit must be positive and finite")
     # Both solution branches use the same thermodynamic reconstruction and nondimensional surface coordinate.
@@ -639,15 +660,18 @@ def solve_boundary_layer(*, surface: SurfaceCoordinates, chord: float, inlet_edg
         transition_index = laminar["transition_index"]
         separation_index = laminar["separation_index"]
         if transition_index is not None and transition_index < count:
-            # NASA TM X-2434 and NASA TM X-2343 recommend CTHET=1: transition at natural
-            # onset or imminent laminar separation, conserving theta.
+            # Use the NASA CTHET=1 option: transition at natural onset or
+            # imminent laminar separation, conserving theta. The laminar
+            # FORMI transformation uses sqrt(Pr); Pr^(1/3) is used for the
+            # turbulent reconstruction and user-supplied turbulent thicknesses.
             initial_theta = max(float(theta[transition_index]), 1.0e-12)
             temperature_factor = 1.0 + 0.5 * (gamma - 1.0) * edge_flow_mach[transition_index] ** 2
             incompressible_form = \
-                    (form[transition_index] - float(state["pr"]) ** (1.0 / 3.0) * (temperature_factor - 1.0))\
+                    (form[transition_index] - math.sqrt(float(state["pr"])) * (temperature_factor - 1.0))\
                     / temperature_factor
             turbulent_incompressible_form = _transition_incompressible_form_factor(
-                float(incompressible_form), float(laminar["transition_reynolds_number"]))
+                float(incompressible_form), float(laminar["transition_reynolds_number"]),
+                transition_model=transition_model)
             turbulent = _turbulent_solution(
                 state, transition_index, initial_theta, max(turbulent_incompressible_form, 1.021))
             for name, target in (("theta", theta), ("displacement", displacement), ("form", form)):

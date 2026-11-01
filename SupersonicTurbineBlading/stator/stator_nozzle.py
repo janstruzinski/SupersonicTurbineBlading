@@ -30,7 +30,8 @@ class StatorDesignConvergenceError(RuntimeError):
 class _CorrectedExit:
     """Extrapolated suction-side values created by NASA TM X-2343 ``AFMIX``.
 
-    :ivar float displacement: Final displacement thickness in nozzle coordinates.
+    :ivar float displacement: Calculated displacement thickness at the extended exit in nozzle coordinates;
+        may differ from the geometric offset when monotonic profile correction is enabled.
     :ivar float momentum: Final momentum thickness in nozzle coordinates.
     :ivar float first_extension: First added suction-wall straight length.
     :ivar float second_extension: Second added suction-wall straight length.
@@ -186,6 +187,9 @@ class SupersonicStatorNozzle:
         If false, retain BL results, corrected shapes and corrected exit diagnostics, but store mixing results and
         real outlet states as ``None``. Mixed-flow matching and a mixing-solution override are disabled with a
         warning if supplied. Requires BL calculation; always disabled for conical nozzles.
+    :param bool smooth_corrected_profile: Use the running maximum of displacement thickness for MOC geometry
+        correction; default ``True``. Hold each previous maximum until the calculated thickness exceeds it.
+        Calculated BL results are retained; aftermixing uses their extrapolation to the corrected exit.
     :param BoundaryLayerMode | None boundary_layer_mode: MOC only: ``"fully_turbulent"`` or
         ``"laminar_then_turbulent"``; omission selects natural transition. Both start at the throat.
         For conical nozzles this must be ``None``. The converging subsonic contour is outside this class.
@@ -222,6 +226,7 @@ class SupersonicStatorNozzle:
         match_real_outlet_absolute_flow_mach: bool = False,
         calculate_boundary_layer: bool = True,
         calculate_aftermixing: bool = True,
+        smooth_corrected_profile: bool = True,
         boundary_layer_mode: BoundaryLayerMode | None = None,
         initial_turbulent_displacement_thickness: float | None = None,
         initial_turbulent_momentum_thickness: float | None = None,
@@ -257,6 +262,7 @@ class SupersonicStatorNozzle:
             match_real_outlet_absolute_flow_mach=match_real_outlet_absolute_flow_mach,
             calculate_boundary_layer=calculate_boundary_layer,
             calculate_aftermixing=calculate_aftermixing,
+            smooth_corrected_profile=smooth_corrected_profile,
             boundary_layer_mode=boundary_layer_mode,
             initial_turbulent_displacement_thickness=initial_turbulent_displacement_thickness,
             initial_turbulent_momentum_thickness=initial_turbulent_momentum_thickness,
@@ -273,6 +279,7 @@ class SupersonicStatorNozzle:
         self.number_of_nodes = int(number_of_nodes)
         self.calculate_boundary_layer = calculate_boundary_layer and contour_method == "moc"
         self.calculate_aftermixing = calculate_aftermixing and self.calculate_boundary_layer
+        self.smooth_corrected_profile = smooth_corrected_profile
         self.iterate_outlet_metal_angle = iterate_outlet_metal_angle and self.calculate_aftermixing
         self.match_real_outlet_absolute_flow_mach = match_real_outlet_absolute_flow_mach and self.calculate_aftermixing
         self.boundary_layer_mode = (
@@ -439,6 +446,8 @@ class SupersonicStatorNozzle:
             raise TypeError("calculate_boundary_layer must be a bool")
         if not isinstance(values["calculate_aftermixing"], bool):
             raise TypeError("calculate_aftermixing must be a bool")
+        if not isinstance(values["smooth_corrected_profile"], bool):
+            raise TypeError("smooth_corrected_profile must be a bool")
         if not values["calculate_boundary_layer"]:
             return
         if (values["calculate_aftermixing"] and values["match_real_outlet_absolute_flow_mach"]
@@ -597,13 +606,15 @@ class SupersonicStatorNozzle:
             mode=self.boundary_layer_mode,
             initial_turbulent_displacement_thickness_over_chord=initial_displacement_ratio,
             initial_turbulent_momentum_thickness_over_chord=initial_momentum_ratio,
-            laminar_correlation_limit=0.16)
+            laminar_correlation_limit=0.16,
+            transition_model="stator")
 
         pressure_boundary_layer = _slice_boundary_layer(suction_boundary_layer, construction.pressure_point_count)
         corrected, corrected_exit = self._correct_shape(ideal=ideal,
             construction=construction,
             boundary_layer=suction_boundary_layer,
-            outlet_metal_angle=outlet_metal_angle)
+            outlet_metal_angle=outlet_metal_angle,
+            smooth_corrected_profile=self.smooth_corrected_profile)
 
         mixing = None
         if self.calculate_aftermixing:
@@ -638,19 +649,23 @@ class SupersonicStatorNozzle:
     def _correct_shape(*, ideal: NozzleShape,
         construction: IdealNozzleConstruction,
         boundary_layer: BoundaryLayerResult,
-        outlet_metal_angle: float) -> tuple[NozzleShape, _CorrectedExit]:
+        outlet_metal_angle: float,
+        smooth_corrected_profile: bool = True) -> tuple[NozzleShape, _CorrectedExit]:
         """Apply ``NOZZLC`` displacement and ``AFMIX`` exit extrapolation.
 
         :param NozzleShape ideal: Inviscid nozzle geometry.
         :param IdealNozzleConstruction construction: Geometry metadata locating the pressure-side exit.
         :param BoundaryLayerResult boundary_layer: Common wall BL result at geometry stations.
         :param float outlet_metal_angle: Outlet metal angle from the machine axis, degrees.
+        :param bool smooth_corrected_profile: Hold displacement offsets at their running maximum along the wall.
         :return: Corrected nozzle and BL values extrapolated to its final suction-side station.
         :rtype: tuple[NozzleShape, _CorrectedExit]
         :raises BoundaryLayerError: If the corrected exit geometry becomes negative or singular.
         """
 
-        displacement = boundary_layer.displacement_thickness_over_chord * ideal.chord
+        calculated_displacement = boundary_layer.displacement_thickness_over_chord * ideal.chord
+        displacement = (np.maximum.accumulate(calculated_displacement) if smooth_corrected_profile
+                        else calculated_displacement)
         momentum = boundary_layer.momentum_thickness_over_chord * ideal.chord
         pressure_count = construction.pressure_point_count
         pressure_index = pressure_count - 1
@@ -701,16 +716,20 @@ class SupersonicStatorNozzle:
             raise BoundaryLayerError("boundary-layer growth produced a negative exit extension")
         second_extension = max(second_extension, 0.0)
 
-        # Retain the two extrapolated stations printed by the FORTRAN.  The
-        # inviscid Mach remains the specified uniform exit value.
+        # Retain the extrapolated stations printed by the FORTRAN when they
+        # advance the wall. A held offset can make the second extension zero.
+        # The inviscid Mach remains the specified uniform exit value.
         x_1 = float(suction_x[-1] + first_extension)
         x_2 = x_1 + second_extension
-        suction_x = np.concatenate((suction_x, [x_1, x_2]))
-        suction_y = np.concatenate((suction_y, [float(ideal.suction_surface.y[-1] + displacement_1),
-                                                float(ideal.suction_surface.y[-1] + displacement_2)]))
+        extension_x = np.array([x_1, x_2])
+        extension_y = ideal.suction_surface.y[-1] + np.array([displacement_1, displacement_2])
+        advancing = np.hypot(np.diff(np.concatenate((suction_x[-1:], extension_x))),
+                             np.diff(np.concatenate((suction_y[-1:], extension_y)))) > 1.0e-12
+        suction_x = np.concatenate((suction_x, extension_x[advancing]))
+        suction_y = np.concatenate((suction_y, extension_y[advancing]))
         suction_absolute_flow_mach = \
             np.concatenate((suction_absolute_flow_mach,
-                            [suction_absolute_flow_mach[-1], suction_absolute_flow_mach[-1]]))
+                            np.full(np.count_nonzero(advancing), suction_absolute_flow_mach[-1])))
 
         corrected_nozzle_passage_pitch = (
             2.0 * (pressure_exit_y + displacement[pressure_index]) / math.cos(outlet_metal_angle_rad)
@@ -725,7 +744,14 @@ class SupersonicStatorNozzle:
                                 total_pitch=ideal.total_pitch,
                                 trailing_edge_thickness=corrected_trailing_edge_thickness,
                                 coordinate_scale=ideal.coordinate_scale)
-        return corrected, _CorrectedExit(displacement=float(displacement_2), momentum=float(momentum_2),
+        # Geometry uses the monotonic envelope, but losses use the calculated BL,
+        # extrapolated over the actual added wall length with its own gradient.
+        exit_displacement = float(displacement_2)
+        if smooth_corrected_profile:
+            calculated_gradient = (calculated_displacement[-1] - calculated_displacement[-3]) / (arc[-1] - arc[-3])
+            exit_displacement = float(calculated_displacement[-1]
+                                      + (first_extension + second_extension) * calculated_gradient)
+        return corrected, _CorrectedExit(displacement=exit_displacement, momentum=float(momentum_2),
                                          first_extension=float(first_extension),
                                          second_extension=float(second_extension),
                                          nozzle_passage_pitch_increment=float(nozzle_passage_pitch_increment))

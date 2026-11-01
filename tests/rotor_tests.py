@@ -1,4 +1,5 @@
 import math
+from dataclasses import replace
 
 import matplotlib
 import numpy as np
@@ -10,6 +11,7 @@ from SupersonicTurbineBlading import Fluid, SupersonicRotorBlade
 from SupersonicTurbineBlading.gas_dynamics import isentropic_area_ratio, mach_from_prandtl_meyer, prandtl_meyer_angle
 from SupersonicTurbineBlading.rotor import rotor_blade as rotor_blade_module
 from SupersonicTurbineBlading.rotor.rotor_geometry import design_ideal_geometry
+from SupersonicTurbineBlading.rotor.rotor_starting import calculate_starting_limit
 
 
 def make_blade(**overrides):
@@ -34,6 +36,45 @@ def make_blade(**overrides):
     )
     inputs.update(overrides)
     return SupersonicRotorBlade(**inputs)
+
+
+@pytest.mark.parametrize("smoothing", [None, True, False])
+def test_rotor_profile_holds_previous_thickness_until_recovery(monkeypatch, smoothing):
+    original_solver = rotor_blade_module.solve_boundary_layer
+    calculated = []
+
+    def solver_with_thickness_drops(**kwargs):
+        result = original_solver(**kwargs)
+        # Recover past two local peaks, then finish below the last maximum.
+        factor = 1.0 + len(calculated)
+        displacement = np.full_like(result.displacement_thickness_over_chord, 5.0e-4)
+        displacement[:7] = np.array([1.0, 3.0, 2.0, 2.5, 4.0, 3.5, 6.0]) * 1.0e-4
+        displacement *= factor
+        result = replace(result, displacement_thickness_over_chord=displacement,
+                         form_factor=displacement / result.momentum_thickness_over_chord)
+        calculated.append((displacement.copy(), result.momentum_thickness_over_chord.copy()))
+        return result
+
+    monkeypatch.setattr(rotor_blade_module, "solve_boundary_layer", solver_with_thickness_drops)
+    options = {} if smoothing is None else {"smooth_corrected_profile": smoothing}
+    blade = make_blade(calculate_aftermixing=False, **options)
+    assert blade.smooth_corrected_profile is (smoothing is not False)
+    ideal = blade.boundary_layer_reference_shape
+    corrected = blade.nondimensional_shapes.corrected
+    for index, (name, sign) in enumerate((("pressure_surface", 1.0), ("suction_surface", -1.0))):
+        ideal_surface = getattr(ideal, name)
+        corrected_surface = getattr(corrected, name)
+        normal_offset = (sign * (corrected_surface.y - ideal_surface.y)
+                         * np.abs(np.cos(np.radians(ideal_surface.metal_angle))) / ideal.chord)
+        raw_displacement, raw_momentum = calculated[index]
+        expected = raw_displacement.copy()
+        if smoothing is not False:
+            expected[:] = 6.0e-4 * (index + 1)
+            expected[:7] = np.array([1.0, 3.0, 3.0, 3.0, 4.0, 4.0, 6.0]) * 1.0e-4 * (index + 1)
+        np.testing.assert_allclose(normal_offset, expected, atol=1.0e-14)
+        boundary_layer = (blade.pressure_boundary_layer, blade.suction_boundary_layer)[index]
+        np.testing.assert_array_equal(boundary_layer.displacement_thickness_over_chord, raw_displacement)
+        np.testing.assert_array_equal(boundary_layer.momentum_thickness_over_chord, raw_momentum)
 
 
 def test_fluid_uses_explicit_ideal_gas_mixing_rules():
@@ -372,7 +413,7 @@ def test_rotor_disabled_calculations_override_dependent_controls_with_warning(mo
     assert blade.outlet_metal_angle == blade.requested_outlet_relative_flow_angle
 
 
-@pytest.mark.parametrize("setting", ["calculate_boundary_layer", "calculate_aftermixing"])
+@pytest.mark.parametrize("setting", ["calculate_boundary_layer", "calculate_aftermixing", "smooth_corrected_profile"])
 @pytest.mark.parametrize("value", [None, 0, "False"])
 def test_rotor_requires_boolean_calculation_settings(setting, value):
     with pytest.raises(TypeError, match=f"{setting} must be a bool"):
@@ -430,18 +471,18 @@ def test_flow_state_table_is_ordered_from_upstream_inlet_to_aftermixed_outlet():
     assert printed.splitlines()[2].startswith(labels[0])
 
 
-def test_rotor_passes_nasa_tm_x_2434_correlation_limit(monkeypatch):
-    observed_limits = []
+def test_rotor_passes_nasa_tm_x_2434_boundary_layer_procedure(monkeypatch):
+    observed_settings = []
     original_solver = rotor_blade_module.solve_boundary_layer
 
     def recording_solver(**kwargs):
-        observed_limits.append(kwargs["laminar_correlation_limit"])
+        observed_settings.append((kwargs["laminar_correlation_limit"], kwargs["transition_model"]))
         return original_solver(**kwargs)
 
     monkeypatch.setattr(rotor_blade_module, "solve_boundary_layer", recording_solver)
     make_blade()
 
-    assert observed_limits == [0.50, 0.50]
+    assert observed_settings == [(0.50, "rotor"), (0.50, "rotor")]
 
 
 def test_fully_turbulent_mode_requires_both_inlet_thicknesses():
@@ -923,6 +964,26 @@ def test_starting_flag():
     assert skipped.starting_result is None
     assert calculated.starting_result is not None
     assert calculated.starting_result.maximum_starting_ideal_inlet_relative_flow_mach > 1.0
+
+
+def test_starting_weight_flow_matches_nasa_tn_d_4421():
+    # START uses CINTGR (OFACT), not BINTGR (CFACT), for WSTAR.
+    # Evaluate the documented 18/59-degree surface case at full precision;
+    # its published weight-flow parameter rounds to 0.0516.
+    gamma = 1.4
+    lower = mach_from_prandtl_meyer(math.radians(18.0), gamma)
+    upper = mach_from_prandtl_meyer(math.radians(59.0), gamma)
+    result = calculate_starting_limit(2.5, lower, upper, gamma)
+    assert math.isclose(result.weight_flow_parameter, 0.05159687410257242, rel_tol=1.0e-9)
+    assert math.isclose(result.maximum_starting_ideal_inlet_relative_prandtl_meyer_angle,
+                        40.516074519798764, rel_tol=1.0e-9)
+
+
+def test_starting_weight_flow_is_zero_for_equal_surface_mach():
+    result = calculate_starting_limit(2.5, 2.0, 2.0, 1.4)
+    assert result.weight_flow_parameter == 0.0
+    assert result.two_dimensional_flow_reduction == 0.0
+    assert math.isfinite(result.maximum_starting_ideal_inlet_relative_flow_mach)
 
 
 def test_plot_pairs_opposite_surfaces_at_common_leading_edges():

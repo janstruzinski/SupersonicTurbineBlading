@@ -883,6 +883,14 @@ equation. It predicts neutral instability, transition and laminar separation. Th
 the two coupled Sasman-Cresci integral equations for transformed momentum thickness and form factor with SciPy's
 adaptive RK45 Runge-Kutta scheme. At natural transition, or at laminar separation, the code follows the legacy
 `CTHET=1` choice: momentum thickness is conserved and the turbulent march starts immediately.
+If transition first occurs at the final surface station, the turbulent initial values are returned at that station
+without integrating a zero-length interval. Earlier stations retain their laminar results.
+
+Transition initialization follows each row's NASA listing. When no positive transition Reynolds number `RTRAN` is
+available, the rotor sets the transformed turbulent starting form factor to 1.4 (NASA TM X-2434, printed p. 40).
+The stator substitutes `RTRAN=1000` in the correlation (NASA TM X-2343, printed p. 39). Both use the common
+correlation when a positive `RTRAN` has been calculated, including when separation subsequently triggers transition.
+
 
 Two inlet modes are available for the rotor and MOC stator. Omission of `boundary_layer_mode` selects natural
 transition for these designs; the conical stator instead sets it to `None` and skips BL calculations:
@@ -895,6 +903,23 @@ transition for these designs; the conical stator instead sets it to `None` and s
 The initial thicknesses are in metres. Each geometry trial divides them by its own physical scale before marching.
 Their ratio is transformed to the incompressible form factor required by the turbulent correlation. Both classes march
 directly on the same fixed-node surface mesh used to store and correct their geometry.
+
+Both designers accept `smooth_corrected_profile=True` by default. Geometry correction uses the running maximum of
+calculated displacement thickness along each surface:
+
+$$\delta^{\ast}_{\mathrm{profile},i}=\max_{j\leq i}\delta^{\ast}_{j}.$$
+
+If the calculated thickness decreases, including at laminar-to-turbulent transition, the offset holds its previous
+maximum until the calculation exceeds it. This produces nondecreasing displacement offsets; plateaus can still have
+changes in slope, so it does not guarantee continuous tangent or curvature. Set `smooth_corrected_profile=False`
+to apply the calculated thickness directly. The running maximum is applied before the rotor's tangent projection.
+Stator outlet extensions also use the monotonic offsets. This option has no effect when BL correction is disabled,
+including conical nozzles.
+
+`BoundaryLayerResult` retains the calculated displacement thickness, momentum thickness and form factor. Aftermixing
+uses those calculated integral thicknesses and the corrected geometry; for the stator, the calculated exit thicknesses
+are extrapolated over the actual extended wall length. The monotonic offset is a geometry adjustment, not a change to
+the laminar or turbulent equations.
 
 The laminar correlation table is generated to the application limit used by the NASA code: `CORLN=0.50` for rotor
 surfaces and `CORLN=0.16` for a stator nozzle. If the surface solution extends beyond the relevant limit, the code
@@ -912,8 +937,9 @@ Each `BoundaryLayerResult` contains:
   that no turbulent separation was reported; the earlier laminar separation index is not retained after reattachment.
 
 The turbulent separation criterion is a transformed incompressible form factor of 2.8. This is not the same as a
-returned `form_factor`. Downstream of turbulent separation, the solver labels stations `"separated"` and holds the last
-calculated thicknesses and form factor constant for plotting. These downstream values do not model separated-flow
+returned `form_factor`. An initial turbulent state at or above this limit raises `BoundaryLayerError` with the message
+`initial turbulent state is already separated`. Downstream of turbulent separation, the solver labels stations
+`"separated"` and holds the last calculated thicknesses and form factor constant for plotting. These downstream values do not model separated-flow
 growth.
 
 #### Stator boundary-layer correction
@@ -930,18 +956,19 @@ same ideal contour.
 
 The stator boundary-layer solver marches directly on the assembled nozzle surface. `number_of_nodes` sets the
 resolution of each divergent and straight-wall segment and must be an integer of at least 20. Consequently, the BL
-results, ideal geometry and displacement correction all share the same stations. Before the two `AFMIX` exit stations
+results, ideal geometry and displacement correction all share the same stations. Before up to two `AFMIX` exit stations
 are added, a divergent wall contains $N$ nodes and the complete suction wall contains $2N-1$ nodes.
 
 The boundary layer correction is applied in the nozzle transverse direction:
 
-$$y_{\mathrm{pressure,corr}}=y_{\mathrm{pressure}}-\delta^{\ast}, \qquad
-y_{\mathrm{suction,corr}}=y_{\mathrm{suction}}+\delta^{\ast}.$$
+$$y_{\mathrm{pressure,corr}}=y_{\mathrm{pressure}}-\delta^{\ast}_{\mathrm{profile}}, \qquad
+y_{\mathrm{suction,corr}}=y_{\mathrm{suction}}+\delta^{\ast}_{\mathrm{profile}}.$$
 
 It is a vertical offset in nozzle-axis coordinates. The suction-side straight wall segment is
-then extended twice: first by displacement thickness at the end of the symmetrical section,
+then extended in two steps: first by displacement thickness at the end of the symmetrical section,
 and second to account for continued thickness growth along the newly created segment. The corrected circumferential nozzle width
-and the exit BL thicknesses are retained for the final mixed-out calculation.
+and the exit BL thicknesses are retained for the final mixed-out calculation. Zero-length extension steps do not add 
+duplicate surface stations.
 
 Both MOC shapes use the scale established by the uncorrected reference length. The corrected widths are therefore
 allowed to increase with displacement thickness rather than being rescaled to the input `reference_length`.
@@ -962,6 +989,7 @@ Stator controls and outputs are:
 | `number_of_nodes` | Nodes on each divergent and straight-wall segment; default 101. |
 | `calculate_boundary_layer` | Calculate MOC BL correction; default `True`. Set `False` for ideal geometry only. |
 | `calculate_aftermixing` | Calculate the MOC mixed-out outlet state; default `True`. Set `False` for BL correction only. |
+| `smooth_corrected_profile` | Hold profile displacement offsets at their running maximum; default `True`. |
 | `boundary_layer_mode` | Natural-transition or fully turbulent BL.                    |
 | `initial_turbulent_displacement_thickness` | Input throat $\delta^{\ast}$ in fully turbulent mode, in metres.  |
 | `initial_turbulent_momentum_thickness` | Input throat $\theta$ in fully turbulent mode, in metres. |
@@ -984,7 +1012,7 @@ state. Both marches use the stations as MOC for the rotor blade construction.
 The solver returns displacement thickness normal to the local flow. The NASA-style blade-coordinate correction uses
 its vertical component:
 
-$$\Delta y=\frac{\delta^{\ast}}{|\cos\eta|},$$
+$$\Delta y=\frac{\delta^{\ast}_{\mathrm{profile}}}{|\cos\eta|},$$
 
 where $\eta$ is the local surface tangent angle. The pressure surface moves upward and the suction surface downward,
 away from the open passage. Inlet and outlet open pitches are then recalculated from the displaced endpoints and their
@@ -1008,6 +1036,7 @@ Rotor controls and outputs are:
 |---|--------------------------------------------------------------------|
 | `number_of_nodes` | Nodes per MOC transition and circular arc; default 101. |
 | `max_flow_turning_increment` | Largest final turning increment between adjacent MOC nodes, in degrees. |
+| `smooth_corrected_profile` | Hold profile displacement offsets at their running maximum; default `True`. |
 | `boundary_layer_mode` | Natural-transition or fully turbulent BL.                          |
 | `initial_turbulent_displacement_thickness` | Inlet $\delta^{\ast}$ applied to both surfaces, in metres.              |
 | `initial_turbulent_momentum_thickness` | Inlet $\theta$ applied to both surfaces, in metres.                |

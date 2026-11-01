@@ -1,4 +1,5 @@
 import math
+from dataclasses import replace
 
 import matplotlib
 import numpy as np
@@ -24,7 +25,7 @@ def make_stator(**overrides):
         number_of_nodes=41,
         iterate_outlet_metal_angle=False,
         boundary_layer_mode="fully_turbulent",
-        initial_turbulent_displacement_thickness=2.0e-5,
+        initial_turbulent_displacement_thickness=1.5e-5,  # Attached throat state: delta*/theta=3.
         initial_turbulent_momentum_thickness=5.0e-6,
     )
     if overrides.get("contour_method") == "conical":
@@ -35,18 +36,76 @@ def make_stator(**overrides):
     return SupersonicStatorNozzle(**inputs)
 
 
-def test_stator_passes_nasa_tm_x_2343_correlation_limit(monkeypatch):
-    observed_limits = []
+@pytest.mark.parametrize("smoothing", [None, True, False])
+def test_stator_profile_holds_previous_thickness_until_recovery(monkeypatch, smoothing):
+    original_solver = stator_nozzle_module.solve_boundary_layer
+    calculated = []
+
+    def solver_with_thickness_drops(**kwargs):
+        result = original_solver(**kwargs)
+        displacement = np.full_like(result.displacement_thickness_over_chord, 5.0e-4)
+        displacement[:7] = np.array([1.0, 3.0, 2.0, 2.5, 4.0, 3.5, 6.0]) * 1.0e-4
+        displacement[7:] = np.linspace(4.0e-4, 5.0e-4, len(displacement) - 7)
+        result = replace(result, displacement_thickness_over_chord=displacement,
+                         form_factor=displacement / result.momentum_thickness_over_chord)
+        calculated.append((displacement.copy(), result.momentum_thickness_over_chord.copy()))
+        return result
+
+    monkeypatch.setattr(stator_nozzle_module, "solve_boundary_layer", solver_with_thickness_drops)
+    options = {} if smoothing is None else {"smooth_corrected_profile": smoothing}
+    stator = make_stator(calculate_aftermixing=False, **options)
+    assert stator.smooth_corrected_profile is (smoothing is not False)
+    ideal = stator.nondimensional_shapes.uncorrected
+    corrected = stator.nondimensional_shapes.corrected
+    raw_displacement, raw_momentum = calculated[0]
+    expected = raw_displacement.copy()
+    if smoothing is not False:
+        expected[:] = 6.0e-4
+        expected[:7] = np.array([1.0, 3.0, 3.0, 3.0, 4.0, 4.0, 6.0]) * 1.0e-4
+    pressure_count = len(ideal.pressure_surface.x)
+    wall_count = len(ideal.suction_surface.x)
+    np.testing.assert_allclose((ideal.pressure_surface.y - corrected.pressure_surface.y) / ideal.chord,
+                               expected[:pressure_count], atol=1.0e-14)
+    np.testing.assert_allclose((corrected.suction_surface.y[:wall_count] - ideal.suction_surface.y) / ideal.chord,
+                               expected, atol=1.0e-14)
+    np.testing.assert_array_equal(stator.suction_boundary_layer.displacement_thickness_over_chord, raw_displacement)
+    np.testing.assert_array_equal(stator.suction_boundary_layer.momentum_thickness_over_chord, raw_momentum)
+    np.testing.assert_array_equal(stator.pressure_boundary_layer.displacement_thickness_over_chord,
+                                  raw_displacement[:pressure_count])
+    arc = np.concatenate(([0.0], np.cumsum(np.hypot(np.diff(ideal.suction_surface.x),
+                                                   np.diff(ideal.suction_surface.y)))))
+    raw_gradient = (raw_displacement[-1] - raw_displacement[-3]) / (arc[-1] - arc[-3])
+    extension = corrected.suction_surface.x[wall_count:] - ideal.suction_surface.x[-1]
+    if smoothing is not False:
+        # A plateau requires only one extension station; the second would coincide.
+        assert len(extension) == 1
+        expected_extension_offsets = np.full(len(extension), 6.0e-4)
+    else:
+        assert len(extension) == 2
+        expected_extension_offsets = raw_displacement[-1] + extension * raw_gradient
+    np.testing.assert_allclose((corrected.suction_surface.y[wall_count:] - ideal.suction_surface.y[-1]) / ideal.chord,
+                               expected_extension_offsets, atol=1.0e-14)
+    assert np.all(np.hypot(np.diff(corrected.suction_surface.x), np.diff(corrected.suction_surface.y)) > 0.0)
+    # Losses use the calculated gradient over the actual extended wall, even
+    # when the geometric offset holds a plateau with zero growth.
+    expected_exit_displacement = ((raw_displacement[-1] + extension[-1] * raw_gradient)
+                                  * ideal.chord * stator.dimensional_scale_factor)
+    assert math.isclose(stator.dimensional_corrected_exit_displacement_thickness,
+                        expected_exit_displacement, rel_tol=1.0e-12)
+
+
+def test_stator_passes_nasa_tm_x_2343_boundary_layer_procedure(monkeypatch):
+    observed_settings = []
     original_solver = stator_nozzle_module.solve_boundary_layer
 
     def recording_solver(**kwargs):
-        observed_limits.append(kwargs["laminar_correlation_limit"])
+        observed_settings.append((kwargs["laminar_correlation_limit"], kwargs["transition_model"]))
         return original_solver(**kwargs)
 
     monkeypatch.setattr(stator_nozzle_module, "solve_boundary_layer", recording_solver)
     make_stator()
 
-    assert observed_limits == [0.16]
+    assert observed_settings == [(0.16, "stator")]
 
 
 def test_stator_uses_rocket_turbines_gas():
@@ -178,12 +237,12 @@ def test_reference_length_scales_ideal_contour_independently_of_trailing_edge_me
 
 @pytest.mark.parametrize("options, chord, reynolds_number, real_flow_angle, real_flow_mach", [
     ({"reference_length": 0.03979350694547071}, 0.05432331459426887, 1997057.033343444,
-     70.91712074713297, 1.7303884409586916),
+     70.9168292938121, 1.7303797091569375),
 ])
 def test_equivalent_dimensions_preserve_existing_bl_and_aftermixing_results(
         options, chord, reynolds_number, real_flow_angle, real_flow_mach):
     # Preserve the previous pitch-sized design's physical dimensions to compare both scaling routes at the same
-    # operating point. Its throat Reynolds scale, BL correction, and aftermixed state should remain unchanged.
+    # operating point. The BL/mixing baseline uses the attached throat state in make_stator.
     stator = make_stator(trailing_edge_thickness=0.002094395102393196, **options)
     assert math.isclose(stator.dimensional_chord, chord, rel_tol=1.0e-12)
     assert math.isclose(stator.chord_reynolds_number, reynolds_number, rel_tol=1.0e-12)
@@ -435,7 +494,7 @@ def test_stator_disabled_calculations_override_dependent_controls_with_warning(m
     assert stator.outlet_metal_angle == stator.requested_outlet_absolute_flow_angle
 
 
-@pytest.mark.parametrize("setting", ["calculate_boundary_layer", "calculate_aftermixing"])
+@pytest.mark.parametrize("setting", ["calculate_boundary_layer", "calculate_aftermixing", "smooth_corrected_profile"])
 @pytest.mark.parametrize("value", [None, 0, "False"])
 def test_stator_requires_boolean_calculation_settings(setting, value):
     with pytest.raises(TypeError, match=f"{setting} must be a bool"):

@@ -151,6 +151,9 @@ class SupersonicRotorBlade:
         If false, retain BL results, corrected shapes and thickness diagnostics, but store mixing results and
         real outlet states as ``None``. Mixed-flow matching and a mixing-solution override are disabled with
         a warning if supplied. Thickness matching remains available. Requires BL calculation.
+    :param bool smooth_corrected_profile: Use the running maximum of displacement thickness for geometry
+        correction; default ``True``. Hold each previous maximum until the calculated thickness exceeds it.
+        Calculated BL results and the integral thicknesses used for aftermixing are retained.
     :param BoundaryLayerMode boundary_layer_mode: ``"fully_turbulent"`` or
         ``"laminar_then_turbulent"``; both start at the rotor inlet. Ignored along with initial thicknesses
         when ``calculate_boundary_layer=False``.
@@ -204,6 +207,7 @@ class SupersonicRotorBlade:
         calculate_starting: bool = True,
         calculate_boundary_layer: bool = True,
         calculate_aftermixing: bool = True,
+        smooth_corrected_profile: bool = True,
         boundary_layer_mode: BoundaryLayerMode = "laminar_then_turbulent",
         initial_turbulent_displacement_thickness: float | None = None,
         initial_turbulent_momentum_thickness: float | None = None,
@@ -246,6 +250,7 @@ class SupersonicRotorBlade:
             use_leading_edge_entry_correction=use_leading_edge_entry_correction,
             calculate_boundary_layer=calculate_boundary_layer,
             calculate_aftermixing=calculate_aftermixing,
+            smooth_corrected_profile=smooth_corrected_profile,
             boundary_layer_mode=boundary_layer_mode,
             initial_turbulent_displacement_thickness=initial_turbulent_displacement_thickness,
             initial_turbulent_momentum_thickness=initial_turbulent_momentum_thickness,
@@ -305,6 +310,7 @@ class SupersonicRotorBlade:
         self.number_of_nodes = int(number_of_nodes)
         self.calculate_boundary_layer = calculate_boundary_layer
         self.calculate_aftermixing = calculate_aftermixing and self.calculate_boundary_layer
+        self.smooth_corrected_profile = smooth_corrected_profile
         self.iterate_outlet_metal_angle = iterate_outlet_metal_angle and self.calculate_aftermixing
         self.match_real_outlet_mach = match_real_outlet_mach and self.calculate_aftermixing
         self.match_LE_and_TE_thickness = match_LE_and_TE_thickness
@@ -516,6 +522,8 @@ class SupersonicRotorBlade:
             raise TypeError("calculate_boundary_layer must be a bool")
         if not isinstance(values["calculate_aftermixing"], bool):
             raise TypeError("calculate_aftermixing must be a bool")
+        if not isinstance(values["smooth_corrected_profile"], bool):
+            raise TypeError("smooth_corrected_profile must be a bool")
         if not values["calculate_boundary_layer"]:
             return
         if values["calculate_aftermixing"]:
@@ -939,7 +947,8 @@ class SupersonicRotorBlade:
             mode=self.boundary_layer_mode,
             initial_turbulent_displacement_thickness_over_chord=initial_displacement_ratio,
             initial_turbulent_momentum_thickness_over_chord=initial_momentum_ratio,
-            laminar_correlation_limit=0.50)
+            laminar_correlation_limit=0.50,
+            transition_model="rotor")
         suction_bl = solve_boundary_layer(surface=ideal.suction_surface,
             chord=ideal.chord,
             inlet_edge_flow_mach=self.real_inlet_relative_flow_mach,
@@ -951,9 +960,11 @@ class SupersonicRotorBlade:
             mode=self.boundary_layer_mode,
             initial_turbulent_displacement_thickness_over_chord=initial_displacement_ratio,
             initial_turbulent_momentum_thickness_over_chord=initial_momentum_ratio,
-            laminar_correlation_limit=0.50)
+            laminar_correlation_limit=0.50,
+            transition_model="rotor")
 
-        corrected = self._correct_shape(ideal, pressure_bl, suction_bl)
+        corrected = self._correct_shape(ideal, pressure_bl, suction_bl,
+                                        smooth_corrected_profile=self.smooth_corrected_profile)
         trailing_edge_vertical_boundary_layer_height = \
             abs(corrected.pressure_surface.y[-1] - ideal.pressure_surface.y[-1]) \
             + abs(corrected.suction_surface.y[-1] - ideal.suction_surface.y[-1])
@@ -986,7 +997,7 @@ class SupersonicRotorBlade:
 
     @staticmethod
     def _correct_shape(ideal: BladeShape, pressure_bl: BoundaryLayerResult,
-                       suction_bl: BoundaryLayerResult) -> BladeShape:
+                       suction_bl: BoundaryLayerResult, *, smooth_corrected_profile: bool = True) -> BladeShape:
         """Offset both MOC surfaces by the calculated displacement thickness.
 
         The BL solver reports a thickness normal to the local flow direction.
@@ -997,12 +1008,16 @@ class SupersonicRotorBlade:
         :param BladeShape ideal: Inviscid MOC geometry.
         :param BoundaryLayerResult pressure_bl: Pressure-side BL at MOC stations.
         :param BoundaryLayerResult suction_bl: Suction-side BL at MOC stations.
+        :param bool smooth_corrected_profile: Hold displacement offsets at their running maximum on each surface.
         :return: BL-corrected passage with recalculated inlet and outlet passage pitch.
         :rtype: BladeShape
         """
 
         pressure_offset = pressure_bl.displacement_thickness_over_chord * ideal.chord
         suction_offset = suction_bl.displacement_thickness_over_chord * ideal.chord
+        if smooth_corrected_profile:
+            pressure_offset = np.maximum.accumulate(pressure_offset)
+            suction_offset = np.maximum.accumulate(suction_offset)
         pressure_cosine = np.maximum(np.abs(np.cos(np.radians(ideal.pressure_surface.metal_angle))), 1.0e-6)
         suction_cosine = np.maximum(np.abs(np.cos(np.radians(ideal.suction_surface.metal_angle))), 1.0e-6)
         pressure = SurfaceCoordinates(x=ideal.pressure_surface.x.copy(),

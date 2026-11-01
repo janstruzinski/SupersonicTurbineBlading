@@ -69,7 +69,7 @@ def calculate_starting_limit(ideal_inlet_relative_flow_mach: float, lower_surfac
         k_max = 1.0 / limiting_ratio
         flow_reduction = 0.0
         q_value = upper_mach_star**2 * ofact(upper_mach_star)
-        weight_integral = 0.0
+        q_integral = 0.0
     else:
 
         def fkmax(k_value: float, return_integral: bool = False) -> float:
@@ -112,9 +112,9 @@ def calculate_starting_limit(ideal_inlet_relative_flow_mach: float, lower_surfac
         if bracket is None:
             raise ValueError("could not bracket the NASA TN D-4421 starting root")
         k_max = bisect(fkmax, *bracket, xtol=1.0e-10, maxiter=150)
-        weight_integral = fkmax(k_max, return_integral=True)
+        flow_reduction_integral = fkmax(k_max, return_integral=True)
         flow_reduction = (1.0 - limiting_ratio * gamma_plus**exponent * upper_mach_star
-                          / (upper_mach_star - lower_mach_star) * k_max * weight_integral)
+                          / (upper_mach_star - lower_mach_star) * k_max * flow_reduction_integral)
         q_integral = float(quad(ofact, lower_mach_star, upper_mach_star, epsabs=1.0e-9, epsrel=1.0e-9)[0])
         q_value = lower_mach_star * upper_mach_star / (upper_mach_star - lower_mach_star) * q_integral
         q_value /= 1.0 - flow_reduction
@@ -141,8 +141,9 @@ def calculate_starting_limit(ideal_inlet_relative_flow_mach: float, lower_surfac
     maximum_mach_star = bisect(lambda value: frat(value) - q_value, *bracket, xtol=1.0e-10, maxiter=150)
     maximum_mach = mach_from_critical_velocity_ratio(maximum_mach_star, gamma)
     maximum_prandtl_meyer_angle = math.degrees(prandtl_meyer_angle(maximum_mach, gamma))
-    weight_flow_parameter = ((1.0 / gamma_plus) ** (gamma_plus / (2.0 * gamma_minus)) * weight_integral
-                             if weight_integral else 0.0)
+    # NASA START uses CINTGR (OFACT) for WSTAR, distinct from the
+    # BINTGR (CFACT) integral used above for the flow reduction.
+    weight_flow_parameter = (1.0 / gamma_plus) ** (gamma_plus / (2.0 * gamma_minus)) * q_integral
     return StartingResult(maximum_starting_ideal_inlet_relative_flow_mach=maximum_mach,
         maximum_starting_ideal_inlet_relative_prandtl_meyer_angle=maximum_prandtl_meyer_angle,
         specified_ideal_inlet_relative_flow_mach=ideal_inlet_relative_flow_mach,
