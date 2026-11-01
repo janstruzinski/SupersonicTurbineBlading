@@ -9,7 +9,7 @@ test configuration.
 from setuptools import find_packages, setup
 
 setup(name="supersonic-turbine-blading",
-    version="1.0.0",
+    version="1.1.0",
     description="Sizing of supersonic impulse turbine rotor blades and stator nozzles",
     author="Jan Struzinski",
     license="GPL-3.0-only",
