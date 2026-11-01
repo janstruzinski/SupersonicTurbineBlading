@@ -1063,9 +1063,9 @@ class SupersonicRotorBlade:
                 ideal = last_shape = self._design_ideal_geometry(mach, angle)
             evaluation_count += 1
             scale = self._dimensional_scale(ideal).sonic_radius
-            # Scale by the independently checked dimensional pitch tolerance (1 micrometre).
+            # Scale by the independently checked dimensional pitch tolerance (0.01 mm).
             return np.asarray([(last_shape.outlet_passage_pitch - last_shape.inlet_passage_pitch)
-                               * scale / 1.0e-6])
+                               * scale / 1.0e-5])
 
         try:
             initial = float(np.clip(initial, lower_bound, upper_bound))
@@ -1077,7 +1077,7 @@ class SupersonicRotorBlade:
             raise DesignConvergenceError(f"{shape_name} LE/TE thickness matching encountered an infeasible trial") from error
         if not solution.success or abs(final_residual) > 1.0:
             raise DesignConvergenceError(f"{shape_name} LE/TE thickness matching did not converge; "
-                                         f"final thickness difference was {final_residual * 1.0e-6:.6g} m")
+                                         f"final thickness difference was {final_residual * 1.0e-5:.6g} m")
         mach = initial_mach if self.match_thickness_with_angle else float(solution.x[0])
         angle = float(solution.x[0]) if self.match_thickness_with_angle else initial_angle
         return mach, angle, replace(last_shape, thickness_matching_iteration_count=evaluation_count)
